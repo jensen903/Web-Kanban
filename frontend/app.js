@@ -394,7 +394,7 @@ function renderOverview(data) {
       ${renderMetricCards([
         {
           label: "总营收",
-          value: formatCurrency(data.summary.total_revenue),
+          value: formatWanInteger(data.summary.total_revenue),
           sub: `统计周期 ${state.startDate} - ${state.endDate}`,
         },
         { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: "三平台有效订单合计" },
@@ -413,7 +413,7 @@ function renderOverview(data) {
               <h3>平台营收贡献占比</h3>
               <p class="panel-note">各平台收入占三平台总收入的比例</p>
             </div>
-            <span class="mini-stat">总收入 ${formatCurrency(data.summary.total_revenue)}</span>
+            <span class="mini-stat">总收入 ${formatWanInteger(data.summary.total_revenue)}</span>
           </div>
           <div class="donut-wrap">
             ${renderDonutChart(revenueShare)}
@@ -469,7 +469,7 @@ function renderOverview(data) {
 
 function renderTrends(data) {
   const trendMetrics = [
-    { title: "营业收入趋势", metricLabel: "营业收入", series: buildTrendSeries(data.revenue), format: "currency" },
+    { title: "营业收入趋势", metricLabel: "营业收入", series: buildTrendSeries(data.revenue), format: "currency-int" },
     { title: "订单量趋势", metricLabel: "订单量", series: buildTrendSeries(data.orders), format: "integer" },
     { title: "曝光量趋势", metricLabel: "曝光量", series: buildTrendSeries(data.exposure), format: "integer" },
     { title: "进店人数趋势", metricLabel: "进店人数", series: buildTrendSeries(data.visitUsers), format: "integer" },
@@ -481,7 +481,7 @@ function renderTrends(data) {
   document.getElementById("view-trends").innerHTML = `
     <div class="dashboard-grid">
       ${renderMetricCards([
-        { label: "总营收", value: formatCurrency(data.summary.total_revenue), sub: "趋势页汇总" },
+        { label: "总营收", value: formatWanInteger(data.summary.total_revenue), sub: "趋势页汇总" },
         { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: "趋势页汇总" },
         { label: "活跃门店", value: formatInteger(data.summary.active_stores), sub: "趋势页汇总" },
         { label: "周期范围", value: `${state.startDate} - ${state.endDate}`, sub: "当前筛选区间" },
@@ -515,7 +515,7 @@ function renderStores(data) {
   document.getElementById("view-stores").innerHTML = `
     <div class="dashboard-grid">
       ${renderMetricCards([
-        { label: "总营收", value: formatCurrency(data.summary.total_revenue), sub: locationSubtitle() },
+        { label: "总营收", value: formatWanInteger(data.summary.total_revenue), sub: locationSubtitle() },
         { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: locationSubtitle() },
         { label: "活跃门店", value: formatInteger(data.summary.active_stores), sub: "按门店明细统计" },
         { label: "统计区间", value: `${state.startDate} - ${state.endDate}`, sub: "支持省份 / 城市筛选" },
@@ -574,7 +574,7 @@ function renderRegions(data) {
   document.getElementById("view-regions").innerHTML = `
     <div class="dashboard-grid">
       ${renderMetricCards([
-        { label: "总营收", value: formatCurrency(data.summary.total_revenue), sub: "地域分析汇总" },
+        { label: "总营收", value: formatWanInteger(data.summary.total_revenue), sub: "地域分析汇总" },
         { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: "地域分析汇总" },
         {
           label: "覆盖城市",
@@ -805,7 +805,7 @@ function renderLineChart(seriesByPlatform, format, metricLabel = "指标值") {
                     cy="${point.y}"
                     r="12"
                     fill="transparent"
-                    data-tooltip="${escapeHtml(`${point.date.slice(5)} · ${platform} · ${metricLabel} · ${formatValue(point.rawValue ?? 0, format)}`)}"
+                    data-tooltip="${escapeHtml(`${point.date.slice(5)} · ${platform} · ${formatValue(point.rawValue ?? 0, format)}`)}"
                   ></circle>
                 `
                 : "",
@@ -1078,6 +1078,14 @@ function formatCurrency(value) {
   }).format(Number(value || 0));
 }
 
+function formatCurrencyInteger(value) {
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency",
+    currency: "CNY",
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+}
+
 function formatInteger(value) {
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(Number(value || 0));
 }
@@ -1086,16 +1094,28 @@ function formatPercent(value) {
   return `${(Number(value || 0) * 100).toFixed(1)}%`;
 }
 
+function formatWanInteger(value) {
+  return `${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(Math.round(Number(value || 0) / 10000))}万`;
+}
+
 function formatValue(value, format) {
   if (format === "currency") return formatCurrency(value);
+  if (format === "currency-int") return formatCurrencyInteger(value);
   if (format === "integer") return formatInteger(value);
   if (format === "percent") return formatPercent(value);
+  if (format === "wan-int") return formatWanInteger(value);
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(Number(value || 0));
 }
 
 function formatAxisTickValue(value, format) {
   if (format === "percent") {
     return `${(Number(value || 0) * 100).toFixed(0)}%`;
+  }
+  if (format === "wan-int") {
+    return formatWanInteger(value);
+  }
+  if (format === "currency-int") {
+    return formatCurrencyInteger(value);
   }
   if (format === "currency") {
     return new Intl.NumberFormat("zh-CN", {
