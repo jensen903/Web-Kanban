@@ -120,6 +120,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "top_revenue": fetch_city_top20(filters, "revenue"),
                     "top_orders": fetch_city_top20(filters, "orders"),
                     "top_store_count": fetch_city_top20(filters, "store_count"),
+                    "top_store_output": fetch_city_top20(filters, "revenue_per_store"),
                 }
             )
             return
@@ -217,6 +218,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return fetch_city_top20(filters, "orders")
         if route == "/api/v1/regions/top-store-count":
             return fetch_city_top20(filters, "store_count")
+        if route == "/api/v1/regions/top-store-output":
+            return fetch_city_top20(filters, "revenue_per_store")
 
         if route == "/api/v1/store-mappings/summary":
             return fetch_store_mapping_summary(

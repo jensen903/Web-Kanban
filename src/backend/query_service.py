@@ -434,25 +434,53 @@ def fetch_store_opportunity_low_exposure(filters: QueryFilters, limit: int = 10)
 
 
 def fetch_city_top20(filters: QueryFilters, metric: str) -> list[dict[str, Any]]:
+    if metric == "store_count":
+        sql = """
+            SELECT
+                province,
+                city,
+                '' AS platform,
+                COUNT(DISTINCT standard_store_id) AS metric_value
+            FROM dim_standard_store
+            WHERE standard_store_id IS NOT NULL
+              AND standard_store_id != ''
+              AND city IS NOT NULL
+              AND city != ''
+            GROUP BY province, city
+            ORDER BY metric_value DESC, province, city
+            LIMIT 20
+        """
+        with _connect() as conn:
+            return [dict(row) for row in conn.execute(sql).fetchall()]
+
+    aggregate_city = len(tuple(platform for platform in filters.platforms if platform in PLATFORMS)) > 1
     metric_sql = {
         "revenue": "COALESCE(SUM(revenue), 0)",
         "orders": "COALESCE(SUM(valid_orders), 0)",
-        "store_count": "COUNT(DISTINCT COALESCE(standard_store_id, platform || ':' || platform_store_id))",
+        "revenue_per_store": "COALESCE(SUM(revenue), 0) / NULLIF(COUNT(DISTINCT COALESCE(standard_store_id, platform || ':' || platform_store_id)), 0)",
     }
     if metric not in metric_sql:
         raise ValueError(f"不支持的城市 Top20 指标: {metric}")
 
     where_sql, params = _where_clause(filters)
     province_sql = _resolved_province_sql()
+    platform_sql = "'' AS platform," if aggregate_city else "platform,"
+    group_by_sql = f"GROUP BY {province_sql}, city" if aggregate_city else f"GROUP BY {province_sql}, city, platform"
+    extra_fields = ""
+    if metric == "revenue_per_store":
+        extra_fields = """
+            COUNT(DISTINCT COALESCE(standard_store_id, platform || ':' || platform_store_id)) AS store_count,
+        """
     sql = f"""
         SELECT
             {province_sql} AS province,
             city,
-            platform,
+            {platform_sql}
+            {extra_fields}
             {metric_sql[metric]} AS metric_value
         FROM dwd_platform_daily_normalized
         {where_sql}
-        GROUP BY {province_sql}, city, platform
+        {group_by_sql}
         ORDER BY metric_value DESC
         LIMIT 20
     """

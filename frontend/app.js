@@ -391,14 +391,15 @@ async function loadStoresData() {
 
 async function loadRegionsData() {
   const query = buildQuery();
-  const [summary, topRevenue, topOrders, topStoreCount] = await Promise.all([
+  const [summary, topRevenue, topOrders, topStoreCount, topStoreOutput] = await Promise.all([
     apiGet("/regions/summary", query),
     apiGet("/regions/top-revenue", query),
     apiGet("/regions/top-orders", query),
     apiGet("/regions/top-store-count", query),
+    apiGet("/regions/top-store-output", query),
   ]);
 
-  return { summary, topRevenue, topOrders, topStoreCount };
+  return { summary, topRevenue, topOrders, topStoreCount, topStoreOutput };
 }
 
 async function loadMappingsData() {
@@ -647,29 +648,39 @@ function renderStores(data) {
 }
 
 function renderRegions(data) {
-  const topRevenue = buildCityRankItems(data.topRevenue);
-  const topOrders = buildCityRankItems(data.topOrders);
-  const topStoreCount = buildCityRankItems(data.topStoreCount);
+  const topRevenue = buildCityRankItems(data.topRevenue.slice(0, 10));
+  const topOrders = buildCityRankItems(data.topOrders.slice(0, 10));
+  const topStoreCount = buildCityRankItems(data.topStoreCount.slice(0, 10));
+  const topStoreOutput = buildCityRankItems(data.topStoreOutput.slice(0, 10), { showStoreCount: true });
 
   document.getElementById("view-regions").innerHTML = `
     <div class="dashboard-grid">
       ${renderMetricCards([
-        { label: "总营收", value: formatWanInteger(data.summary.total_revenue), sub: "地域分析汇总" },
-        { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: "地域分析汇总" },
+        { label: "总营收", value: formatWanInteger(data.summary.total_revenue), sub: "地域经营分布汇总" },
+        { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: "区域规模与经营分布汇总" },
         {
           label: "覆盖城市",
           value: formatInteger(data.summary.covered_cities),
-          sub: `覆盖省份 ${formatInteger(data.summary.covered_provinces)} 个`,
+          sub: `覆盖省份 ${formatInteger(data.summary.covered_provinces)} 个，便于查看区域版图`,
         },
-        { label: "统计区间", value: `${state.startDate} - ${state.endDate}`, sub: "城市维度分析" },
+        { label: "统计区间", value: `${state.startDate} - ${state.endDate}`, sub: "聚焦城市经营分布，不直接做增长判断" },
       ])}
 
-      <div class="chart-grid-3">
+      <article class="panel-card">
+        <div class="panel-header">
+          <div>
+            <h3>地域经营分布</h3>
+            <p class="panel-note">这一页先聚焦区域规模、订单体量和门店分布；其中门店分布榜走标准门店静态版图口径，其余 3 张榜仍跟时间和平台筛选联动。</p>
+          </div>
+        </div>
+      </article>
+
+      <div class="chart-grid-2">
         <article class="panel-card">
           <div class="panel-header">
             <div>
-              <h3>城市收入 Top20</h3>
-              <p class="panel-note">按城市聚合营收</p>
+              <h3>城市收入 Top10</h3>
+              <p class="panel-note">看哪些城市当前经营规模更大</p>
             </div>
           </div>
           <div class="rank-list">${renderRankList(topRevenue, "value", false, "currency", true)}</div>
@@ -678,21 +689,33 @@ function renderRegions(data) {
         <article class="panel-card">
           <div class="panel-header">
             <div>
-              <h3>城市订单量 Top20</h3>
-              <p class="panel-note">按城市聚合订单</p>
+              <h3>城市订单量 Top10</h3>
+              <p class="panel-note">看哪些城市当前订单体量更高</p>
             </div>
           </div>
           <div class="rank-list">${renderRankList(topOrders, "value", false, "integer", true)}</div>
+        </article>
+      </div>
+
+      <div class="chart-grid-2">
+        <article class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h3>城市标准门店分布 Top10</h3>
+              <p class="panel-note">只按标准门店主档统计城市版图，不跟平台筛选联动</p>
+            </div>
+          </div>
+          <div class="rank-list">${renderRankList(topStoreCount, "value", false, "integer", true)}</div>
         </article>
 
         <article class="panel-card">
           <div class="panel-header">
             <div>
-              <h3>城市门店分布数 Top20</h3>
-              <p class="panel-note">按标准门店数统计</p>
+              <h3>城市单店产出 Top10</h3>
+              <p class="panel-note">城市营收 / 城市门店数，更适合观察区域经营效率</p>
             </div>
           </div>
-          <div class="rank-list">${renderRankList(topStoreCount, "value", false, "integer", true)}</div>
+          <div class="rank-list">${renderRankList(topStoreOutput, "value", false, "currency", true)}</div>
         </article>
       </div>
     </div>
@@ -1069,11 +1092,13 @@ function buildStoreRankItems(rows) {
   }));
 }
 
-function buildCityRankItems(rows) {
+function buildCityRankItems(rows, options = {}) {
+  const { showStoreCount = false } = options;
   return rows.map((row) => ({
     label: row.province ? `${displayProvince(row.province)} / ${row.city || "-"}` : row.city || "-",
-    platform: row.platform,
+    platform: row.platform || "",
     value: Number(row.metric_value || 0),
+    subLabel: showStoreCount && row.store_count ? `门店数 ${formatInteger(row.store_count)}` : "",
   }));
 }
 
