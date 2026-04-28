@@ -1,11 +1,10 @@
-# Source Code Placeholder
+# Source Code
 
-当前仓库还没有正式代码文件。
+当前 `src/` 目录已经开始承载实际代码，主要包括：
 
-后续代码建议放在这里，例如：
+- `src/data_pipeline/`
+  - 原始数据清洗、统一字段、构建本地查询库
+- `src/backend/`
+  - 不依赖 Web 框架的本地查询层
 
-- 前端：`src/frontend/`
-- 后端：`src/backend/`
-- 数据处理脚本：`src/data_pipeline/`
-
-本文件仅用于明确当前仓库状态，避免把“只有文档、还没有代码”的阶段误认为代码已经存在。
+当前还没有正式的 HTTP API 服务层，但数据处理与查询逻辑已经具备原型基础。

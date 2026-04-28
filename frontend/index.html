@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>窄巷口网页看板原型</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <p class="brand-kicker">Web Kanban</p>
+          <h1>窄巷口经营看板</h1>
+          <p class="brand-meta">本地静态原型 · 5 个看板骨架</p>
+        </div>
+
+        <nav class="nav-list">
+          <button class="nav-item is-active" data-view="overview">大盘概览</button>
+          <button class="nav-item" data-view="trends">趋势分析</button>
+          <button class="nav-item" data-view="stores">门店分析</button>
+          <button class="nav-item" data-view="regions">地域分析</button>
+          <button class="nav-item" data-view="mappings">门店映射</button>
+        </nav>
+
+        <section class="sidebar-panel">
+          <p class="panel-label">当前数据范围</p>
+          <p id="dataset-range">加载中...</p>
+        </section>
+      </aside>
+
+      <main class="main-panel">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">内部经营分析</p>
+            <h2 id="view-title">大盘概览</h2>
+          </div>
+          <div class="topbar-info">
+            <span class="status-dot"></span>
+            <span>本地演示数据</span>
+          </div>
+        </header>
+
+        <section class="filter-bar">
+          <div class="filter-group filter-group--segmented">
+            <button class="segment is-active" data-range="7">近7天</button>
+            <button class="segment" data-range="31">近31天</button>
+            <button class="segment" data-range="custom">自定义时间</button>
+          </div>
+
+          <div class="filter-group">
+            <label>开始日期</label>
+            <input type="date" id="start-date" />
+          </div>
+
+          <div class="filter-group">
+            <label>结束日期</label>
+            <input type="date" id="end-date" />
+          </div>
+
+          <div class="filter-group">
+            <label>平台</label>
+            <div class="platform-toggle">
+              <button class="platform-chip is-active" data-platform="美团">美团</button>
+              <button class="platform-chip is-active" data-platform="饿了么">饿了么</button>
+              <button class="platform-chip is-active" data-platform="京东">京东</button>
+            </div>
+          </div>
+
+          <div class="filter-group filter-location">
+            <label>省份</label>
+            <select id="province-filter">
+              <option value="">全部省份</option>
+            </select>
+          </div>
+
+          <div class="filter-group filter-location">
+            <label>城市</label>
+            <select id="city-filter">
+              <option value="">全部城市</option>
+            </select>
+          </div>
+        </section>
+
+        <section id="view-overview" class="view-section is-visible"></section>
+        <section id="view-trends" class="view-section"></section>
+        <section id="view-stores" class="view-section"></section>
+        <section id="view-regions" class="view-section"></section>
+        <section id="view-mappings" class="view-section"></section>
+      </main>
+    </div>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
