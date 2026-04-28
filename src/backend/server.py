@@ -11,11 +11,14 @@ from query_service import (
     fetch_city_top20,
     fetch_core_table,
     fetch_filter_options,
+    fetch_growth_efficiency,
     fetch_order_compare,
     fetch_overview_summary,
     fetch_revenue_share,
     fetch_store_mapping_list,
     fetch_store_mapping_summary,
+    fetch_store_opportunity_low_conversion,
+    fetch_store_opportunity_low_exposure,
     fetch_store_top20,
     fetch_ticket_compare,
     fetch_trend,
@@ -71,6 +74,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "order_compare": fetch_order_compare(filters),
                     "ticket_compare": fetch_ticket_compare(filters),
                     "core_table": fetch_core_table(filters),
+                    "growth_efficiency": fetch_growth_efficiency(filters),
                 }
             )
             return
@@ -82,6 +86,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "revenue": fetch_trend(filters, "revenue"),
                     "orders": fetch_trend(filters, "orders"),
                     "exposure_users": fetch_trend(filters, "exposure_users"),
+                    "visit_users": fetch_trend(filters, "visit_users"),
+                    "visit_conversion_rate": fetch_trend(filters, "visit_conversion_rate"),
+                    "order_conversion_rate": fetch_trend(filters, "order_conversion_rate"),
                     "hand_rate": fetch_trend(filters, "hand_rate"),
                     "active_stores": fetch_trend(filters, "active_stores"),
                 }
@@ -97,6 +104,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "top_revenue": fetch_store_top20(filters, "revenue", limit=stores_limit),
                     "top_orders": fetch_store_top20(filters, "orders", limit=stores_limit),
                     "top_conversion": fetch_store_top20(filters, "order_conversion_rate", limit=stores_limit),
+                    "opportunity_low_conversion": fetch_store_opportunity_low_conversion(filters, limit=stores_limit),
+                    "opportunity_low_exposure": fetch_store_opportunity_low_exposure(filters, limit=stores_limit),
                 }
             )
             return
@@ -118,10 +127,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "summary": fetch_store_mapping_summary(
                         platforms=filters.platforms,
                         keyword=query.get("keyword", [""])[0] or None,
+                        mapping_filter=query.get("mapping_filter", ["all"])[0] or "all",
                     ),
                     "rows": fetch_store_mapping_list(
                         limit=int(query.get("limit", ["200"])[0] or "200"),
                         keyword=query.get("keyword", [""])[0] or None,
+                        mapping_filter=query.get("mapping_filter", ["all"])[0] or "all",
+                        platforms=filters.platforms,
                     ),
                 }
             )
@@ -146,6 +158,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return fetch_ticket_compare(filters)
         if route == "/api/v1/overview/core-table":
             return fetch_core_table(filters)
+        if route == "/api/v1/overview/growth-efficiency":
+            return fetch_growth_efficiency(filters)
 
         if route == "/api/v1/trends/summary":
             return fetch_overview_summary(filters)
@@ -155,6 +169,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return fetch_trend(filters, "orders")
         if route == "/api/v1/trends/exposure":
             return fetch_trend(filters, "exposure_users")
+        if route == "/api/v1/trends/visit-users":
+            return fetch_trend(filters, "visit_users")
+        if route == "/api/v1/trends/visit-conversion":
+            return fetch_trend(filters, "visit_conversion_rate")
+        if route == "/api/v1/trends/order-conversion":
+            return fetch_trend(filters, "order_conversion_rate")
         if route == "/api/v1/trends/hand-rate":
             return fetch_trend(filters, "hand_rate")
 
@@ -172,6 +192,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 "order_conversion_rate",
                 limit=int(query.get("limit", ["20"])[0] or "20"),
             )
+        if route == "/api/v1/stores/opportunity-low-conversion":
+            return fetch_store_opportunity_low_conversion(filters, limit=int(query.get("limit", ["10"])[0] or "10"))
+        if route == "/api/v1/stores/opportunity-low-exposure":
+            return fetch_store_opportunity_low_exposure(filters, limit=int(query.get("limit", ["10"])[0] or "10"))
 
         if route == "/api/v1/regions/summary":
             return fetch_overview_summary(filters)
@@ -186,12 +210,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return fetch_store_mapping_summary(
                 platforms=filters.platforms,
                 keyword=query.get("keyword", [""])[0] or None,
+                mapping_filter=query.get("mapping_filter", ["all"])[0] or "all",
             )
         if route == "/api/v1/store-mappings/list":
             limit = int(query.get("limit", ["200"])[0] or "200")
             return fetch_store_mapping_list(
                 limit=limit,
                 keyword=query.get("keyword", [""])[0] or None,
+                mapping_filter=query.get("mapping_filter", ["all"])[0] or "all",
+                platforms=filters.platforms,
             )
 
         return None

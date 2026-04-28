@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import statistics
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,12 @@ class QueryFilters:
 
 
 PLATFORMS = ("美团", "饿了么", "京东")
+MANUAL_CITY_PROVINCE_MAP = {
+    "沧州": "河北",
+    "济南": "山东",
+    "西安": "陕西",
+    "贵港": "广西壮族",
+}
 
 
 def _connect() -> sqlite3.Connection:
@@ -33,6 +41,40 @@ def _is_real_mapping_id(value: Any) -> bool:
     return bool(value and value != "未入驻平台")
 
 
+@lru_cache(maxsize=1)
+def _city_province_map() -> dict[str, str]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT city, MIN(province) AS province
+            FROM dwd_platform_daily_normalized
+            WHERE city IS NOT NULL
+              AND city != ''
+              AND province IS NOT NULL
+              AND province != ''
+            GROUP BY city
+            """
+        ).fetchall()
+
+    mapping = {row["city"]: row["province"] for row in rows}
+    for city, province in MANUAL_CITY_PROVINCE_MAP.items():
+        mapping.setdefault(city, province)
+    return mapping
+
+
+def _sql_string(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _resolved_province_sql(city_column: str = "city", province_column: str = "province") -> str:
+    city_map = _city_province_map()
+    cases = " ".join(
+        f"WHEN {city_column} = {_sql_string(city)} THEN {_sql_string(province)}"
+        for city, province in sorted(city_map.items())
+    )
+    return f"COALESCE(NULLIF({province_column}, ''), CASE {cases} END)"
+
+
 def _where_clause(filters: QueryFilters, include_location: bool = False) -> tuple[str, list[Any]]:
     clauses = ["biz_date >= ?", "biz_date <= ?"]
     params: list[Any] = [filters.start_date, filters.end_date]
@@ -43,7 +85,7 @@ def _where_clause(filters: QueryFilters, include_location: bool = False) -> tupl
         params.extend(filters.platforms)
 
     if include_location and filters.province:
-        clauses.append("province = ?")
+        clauses.append(f"{_resolved_province_sql()} = ?")
         params.append(filters.province)
 
     if include_location and filters.city:
@@ -55,6 +97,7 @@ def _where_clause(filters: QueryFilters, include_location: bool = False) -> tupl
 
 def fetch_overview_summary(filters: QueryFilters) -> dict[str, Any]:
     where_sql, params = _where_clause(filters, include_location=True)
+    province_sql = _resolved_province_sql()
     sql = f"""
         SELECT
             COALESCE(SUM(revenue), 0) AS total_revenue,
@@ -64,7 +107,7 @@ def fetch_overview_summary(filters: QueryFilters) -> dict[str, Any]:
                     WHEN active_store_flag = 1 THEN COALESCE(standard_store_id, platform || ':' || platform_store_id)
                 END
             ) AS active_stores,
-            COUNT(DISTINCT province) AS covered_provinces,
+            COUNT(DISTINCT {province_sql}) AS covered_provinces,
             COUNT(DISTINCT city) AS covered_cities
         FROM dwd_platform_daily_normalized
         {where_sql}
@@ -154,11 +197,34 @@ def fetch_core_table(filters: QueryFilters) -> list[dict[str, Any]]:
     return result
 
 
+def fetch_growth_efficiency(filters: QueryFilters) -> list[dict[str, Any]]:
+    where_sql, params = _where_clause(filters)
+    sql = f"""
+        SELECT
+            platform,
+            COALESCE(SUM(exposure_users), 0) AS exposure_users,
+            COALESCE(SUM(visit_users), 0) AS visit_users,
+            COALESCE(SUM(valid_orders), 0) AS valid_orders,
+            COALESCE(SUM(revenue), 0) AS revenue,
+            AVG(visit_conversion_rate) AS visit_conversion_rate,
+            AVG(order_conversion_rate) AS order_conversion_rate
+        FROM dwd_platform_daily_normalized
+        {where_sql}
+        GROUP BY platform
+        ORDER BY revenue DESC
+    """
+    with _connect() as conn:
+        return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+
 def fetch_trend(filters: QueryFilters, metric: str) -> list[dict[str, Any]]:
     metric_sql = {
         "revenue": "COALESCE(SUM(revenue), 0)",
         "orders": "COALESCE(SUM(valid_orders), 0)",
         "exposure_users": "COALESCE(SUM(exposure_users), 0)",
+        "visit_users": "COALESCE(SUM(visit_users), 0)",
+        "visit_conversion_rate": "AVG(visit_conversion_rate)",
+        "order_conversion_rate": "AVG(order_conversion_rate)",
         "hand_rate": "CASE WHEN SUM(gross_amount) = 0 THEN NULL ELSE SUM(revenue) * 1.0 / SUM(gross_amount) END",
         "active_stores": """
             COUNT(
@@ -196,6 +262,47 @@ def fetch_store_top20(filters: QueryFilters, metric: str, limit: int = 20) -> li
         raise ValueError(f"不支持的门店 TopN 指标: {metric}")
 
     where_sql, params = _where_clause(filters, include_location=True)
+    aggregate_across_platforms = metric in {"revenue", "orders"} and len(filters.platforms) > 1
+    if aggregate_across_platforms:
+        sql = f"""
+            SELECT
+                standard_store_id,
+                standard_store_name,
+                province,
+                city,
+                NULL AS platform,
+                GROUP_CONCAT(DISTINCT platform) AS platform_scope,
+                COUNT(DISTINCT platform) AS platform_count,
+                {metric_sql[metric]} AS metric_value
+            FROM dwd_platform_daily_normalized
+            {where_sql}
+            GROUP BY standard_store_id, standard_store_name, province, city
+            ORDER BY metric_value DESC
+            LIMIT ?
+        """
+    else:
+        sql = f"""
+            SELECT
+                standard_store_id,
+                standard_store_name,
+                province,
+                city,
+                platform,
+                platform AS platform_scope,
+                1 AS platform_count,
+                {metric_sql[metric]} AS metric_value
+            FROM dwd_platform_daily_normalized
+            {where_sql}
+            GROUP BY standard_store_id, standard_store_name, province, city, platform
+            ORDER BY metric_value DESC
+            LIMIT ?
+        """
+    with _connect() as conn:
+        return [dict(row) for row in conn.execute(sql, [*params, limit]).fetchall()]
+
+
+def _fetch_store_growth_rows(filters: QueryFilters) -> list[dict[str, Any]]:
+    where_sql, params = _where_clause(filters, include_location=True)
     sql = f"""
         SELECT
             standard_store_id,
@@ -203,15 +310,79 @@ def fetch_store_top20(filters: QueryFilters, metric: str, limit: int = 20) -> li
             province,
             city,
             platform,
-            {metric_sql[metric]} AS metric_value
+            COALESCE(SUM(exposure_users), 0) AS exposure_users,
+            COALESCE(SUM(valid_orders), 0) AS valid_orders,
+            AVG(order_conversion_rate) AS order_conversion_rate
         FROM dwd_platform_daily_normalized
         {where_sql}
         GROUP BY standard_store_id, standard_store_name, province, city, platform
-        ORDER BY metric_value DESC
-        LIMIT ?
+        HAVING standard_store_id IS NOT NULL
     """
     with _connect() as conn:
-        return [dict(row) for row in conn.execute(sql, [*params, limit]).fetchall()]
+        return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return float(statistics.median(values))
+
+
+def fetch_store_opportunity_low_conversion(filters: QueryFilters, limit: int = 10) -> list[dict[str, Any]]:
+    rows = _fetch_store_growth_rows(filters)
+    if not rows:
+        return []
+
+    exposure_median = _median([float(row["exposure_users"] or 0) for row in rows])
+    orders_median = _median([float(row["valid_orders"] or 0) for row in rows])
+    conversion_median = _median(
+        [float(row["order_conversion_rate"] or 0) for row in rows if row["order_conversion_rate"] is not None]
+    )
+
+    candidates = [
+        row
+        for row in rows
+        if float(row["exposure_users"] or 0) >= exposure_median
+        and float(row["valid_orders"] or 0) >= orders_median
+        and float(row["order_conversion_rate"] or 0) <= conversion_median
+    ]
+
+    candidates.sort(
+        key=lambda row: (
+            -float(row["exposure_users"] or 0),
+            float(row["order_conversion_rate"] or 0),
+            -float(row["valid_orders"] or 0),
+        )
+    )
+    return candidates[:limit]
+
+
+def fetch_store_opportunity_low_exposure(filters: QueryFilters, limit: int = 10) -> list[dict[str, Any]]:
+    rows = _fetch_store_growth_rows(filters)
+    if not rows:
+        return []
+
+    exposure_median = _median([float(row["exposure_users"] or 0) for row in rows])
+    orders_median = _median([float(row["valid_orders"] or 0) for row in rows])
+    conversions = [float(row["order_conversion_rate"] or 0) for row in rows if row["order_conversion_rate"] is not None]
+    conversion_p75 = statistics.quantiles(conversions, n=4)[2] if len(conversions) >= 4 else _median(conversions)
+
+    candidates = [
+        row
+        for row in rows
+        if float(row["exposure_users"] or 0) <= exposure_median
+        and float(row["valid_orders"] or 0) >= orders_median
+        and float(row["order_conversion_rate"] or 0) >= float(conversion_p75 or 0)
+    ]
+
+    candidates.sort(
+        key=lambda row: (
+            -float(row["order_conversion_rate"] or 0),
+            float(row["exposure_users"] or 0),
+            -float(row["valid_orders"] or 0),
+        )
+    )
+    return candidates[:limit]
 
 
 def fetch_city_top20(filters: QueryFilters, metric: str) -> list[dict[str, Any]]:
@@ -224,15 +395,16 @@ def fetch_city_top20(filters: QueryFilters, metric: str) -> list[dict[str, Any]]
         raise ValueError(f"不支持的城市 Top20 指标: {metric}")
 
     where_sql, params = _where_clause(filters)
+    province_sql = _resolved_province_sql()
     sql = f"""
         SELECT
-            province,
+            {province_sql} AS province,
             city,
             platform,
             {metric_sql[metric]} AS metric_value
         FROM dwd_platform_daily_normalized
         {where_sql}
-        GROUP BY province, city, platform
+        GROUP BY {province_sql}, city, platform
         ORDER BY metric_value DESC
         LIMIT 20
     """
@@ -240,30 +412,12 @@ def fetch_city_top20(filters: QueryFilters, metric: str) -> list[dict[str, Any]]
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
 
-def fetch_store_mapping_list(limit: int | None = 200, keyword: str | None = None) -> list[dict[str, Any]]:
-    sql = """
-        SELECT
-            s.standard_store_id,
-            s.standard_store_name,
-            s.province,
-            s.city,
-            s.district,
-            s.operator_name,
-            MAX(CASE WHEN m.platform = '美团' THEN m.platform_store_id END) AS meituan_store_id,
-            MAX(CASE WHEN m.platform = '美团' THEN m.platform_store_name END) AS meituan_store_name,
-            MAX(CASE WHEN m.platform = '饿了么' THEN m.platform_store_id END) AS eleme_store_id,
-            MAX(CASE WHEN m.platform = '饿了么' THEN m.platform_store_name END) AS eleme_store_name,
-            MAX(CASE WHEN m.platform = '京东' THEN m.platform_store_id END) AS jd_store_id,
-            MAX(CASE WHEN m.platform = '京东' THEN m.platform_store_name END) AS jd_store_name
-        FROM dim_standard_store s
-        LEFT JOIN bridge_platform_store_mapping m
-          ON s.standard_store_id = m.standard_store_id
-        GROUP BY s.standard_store_id, s.standard_store_name, s.province, s.city, s.district, s.operator_name
-        ORDER BY s.standard_store_name
-    """
-    with _connect() as conn:
-        rows = [dict(row) for row in conn.execute(sql).fetchall()]
-
+def _filter_mapping_rows(
+    rows: list[dict[str, Any]],
+    keyword: str | None = None,
+    mapping_filter: str | None = None,
+    platforms: tuple[str, ...] = PLATFORMS,
+) -> list[dict[str, Any]]:
     if keyword:
         needle = keyword.strip().lower()
         rows = [
@@ -273,14 +427,72 @@ def fetch_store_mapping_list(limit: int | None = 200, keyword: str | None = None
             in " ".join(
                 str(row.get(field) or "")
                 for field in (
+                    "standard_store_id",
                     "standard_store_name",
+                    "meituan_store_id",
                     "meituan_store_name",
+                    "eleme_store_id",
                     "eleme_store_name",
+                    "jd_store_id",
                     "jd_store_name",
                 )
             ).lower()
         ]
 
+    selected_platforms = tuple(platform for platform in platforms if platform in PLATFORMS) or PLATFORMS
+    if mapping_filter == "fully-unmapped":
+        rows = [
+            row
+            for row in rows
+            if not any(
+                _is_real_mapping_id(row.get(field))
+                for field in ("meituan_store_id", "eleme_store_id", "jd_store_id")
+            )
+        ]
+    elif mapping_filter == "selected-platform-unmapped":
+        field_map = {
+            "美团": "meituan_store_id",
+            "饿了么": "eleme_store_id",
+            "京东": "jd_store_id",
+        }
+        rows = [
+            row
+            for row in rows
+            if any(not _is_real_mapping_id(row.get(field_map[platform])) for platform in selected_platforms)
+        ]
+
+    return rows
+
+
+def fetch_store_mapping_list(
+    limit: int | None = 200,
+    keyword: str | None = None,
+    mapping_filter: str | None = None,
+    platforms: tuple[str, ...] = PLATFORMS,
+) -> list[dict[str, Any]]:
+    sql = """
+        SELECT
+            s.standard_store_id,
+            s.standard_store_name,
+            s.province,
+            s.city,
+            s.district,
+            MAX(CASE WHEN m.platform = '美团' THEN m.platform_store_id END) AS meituan_store_id,
+            MAX(CASE WHEN m.platform = '美团' THEN m.platform_store_name END) AS meituan_store_name,
+            MAX(CASE WHEN m.platform = '饿了么' THEN m.platform_store_id END) AS eleme_store_id,
+            MAX(CASE WHEN m.platform = '饿了么' THEN m.platform_store_name END) AS eleme_store_name,
+            MAX(CASE WHEN m.platform = '京东' THEN m.platform_store_id END) AS jd_store_id,
+            MAX(CASE WHEN m.platform = '京东' THEN m.platform_store_name END) AS jd_store_name
+        FROM dim_standard_store s
+        LEFT JOIN bridge_platform_store_mapping m
+          ON s.standard_store_id = m.standard_store_id
+        GROUP BY s.standard_store_id, s.standard_store_name, s.province, s.city, s.district
+        ORDER BY s.standard_store_name
+    """
+    with _connect() as conn:
+        rows = [dict(row) for row in conn.execute(sql).fetchall()]
+
+    rows = _filter_mapping_rows(rows, keyword=keyword, mapping_filter=mapping_filter, platforms=platforms)
     if limit is not None:
         rows = rows[:limit]
 
@@ -290,8 +502,9 @@ def fetch_store_mapping_list(limit: int | None = 200, keyword: str | None = None
 def fetch_store_mapping_summary(
     platforms: tuple[str, ...] = PLATFORMS,
     keyword: str | None = None,
+    mapping_filter: str | None = None,
 ) -> dict[str, Any]:
-    rows = fetch_store_mapping_list(limit=None, keyword=keyword)
+    rows = fetch_store_mapping_list(limit=None, keyword=keyword, mapping_filter=mapping_filter, platforms=platforms)
     selected_platforms = tuple(platform for platform in platforms if platform in PLATFORMS) or PLATFORMS
 
     selected_mapped_count = 0
@@ -334,24 +547,25 @@ def fetch_store_mapping_summary(
 
 
 def fetch_filter_options() -> dict[str, Any]:
+    province_sql = _resolved_province_sql()
     with _connect() as conn:
         provinces = [
             row["province"]
             for row in conn.execute(
-                """
-                SELECT DISTINCT province
+                f"""
+                SELECT DISTINCT {province_sql} AS province
                 FROM dwd_platform_daily_normalized
-                WHERE province IS NOT NULL AND province != ''
+                WHERE {province_sql} IS NOT NULL AND {province_sql} != ''
                 ORDER BY province
                 """
             ).fetchall()
         ]
         location_rows = conn.execute(
-            """
-            SELECT DISTINCT province, city
+            f"""
+            SELECT DISTINCT {province_sql} AS province, city
             FROM dwd_platform_daily_normalized
-            WHERE province IS NOT NULL
-              AND province != ''
+            WHERE {province_sql} IS NOT NULL
+              AND {province_sql} != ''
               AND city IS NOT NULL
               AND city != ''
             ORDER BY province, city

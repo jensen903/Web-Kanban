@@ -83,7 +83,16 @@
 
           <div class="filter-group filter-mapping">
             <label>门店搜索</label>
-            <input type="search" id="mapping-search" placeholder="搜索标准门店或平台门店名" />
+            <input type="search" id="mapping-search" placeholder="搜索门店名称或门店 ID" />
+          </div>
+
+          <div class="filter-group filter-mapping">
+            <label>映射筛选</label>
+            <select id="mapping-filter">
+              <option value="all">全部门店</option>
+              <option value="fully-unmapped">完全未映射</option>
+              <option value="selected-platform-unmapped">当前平台有未映射</option>
+            </select>
           </div>
         </section>
 

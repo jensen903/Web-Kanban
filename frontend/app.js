@@ -10,6 +10,7 @@ const state = {
   province: "",
   city: "",
   mappingKeyword: "",
+  mappingFilter: "all",
   requestToken: 0,
 };
 
@@ -148,6 +149,11 @@ function bindEvents() {
       await loadAndRenderCurrentView();
     }, 180);
   });
+
+  document.getElementById("mapping-filter").addEventListener("change", async (event) => {
+    state.mappingFilter = event.target.value;
+    await loadAndRenderCurrentView();
+  });
 }
 
 function initializeDates() {
@@ -269,28 +275,32 @@ function buildQuery({ includeLocation = false } = {}) {
 
 async function loadOverviewData() {
   const query = buildQuery();
-  const [summary, revenueShare, orderCompare, ticketCompare, coreTable] = await Promise.all([
+  const [summary, revenueShare, orderCompare, ticketCompare, coreTable, growthEfficiency] = await Promise.all([
     apiGet("/overview/summary", query),
     apiGet("/overview/revenue-share", query),
     apiGet("/overview/order-compare", query),
     apiGet("/overview/ticket-compare", query),
     apiGet("/overview/core-table", query),
+    apiGet("/overview/growth-efficiency", query),
   ]);
 
-  return { summary, revenueShare, orderCompare, ticketCompare, coreTable };
+  return { summary, revenueShare, orderCompare, ticketCompare, coreTable, growthEfficiency };
 }
 
 async function loadTrendsData() {
   const query = buildQuery();
-  const [summary, revenue, orders, exposure, handRate] = await Promise.all([
+  const [summary, revenue, orders, exposure, visitUsers, visitConversion, orderConversion, handRate] = await Promise.all([
     apiGet("/trends/summary", query),
     apiGet("/trends/revenue", query),
     apiGet("/trends/orders", query),
     apiGet("/trends/exposure", query),
+    apiGet("/trends/visit-users", query),
+    apiGet("/trends/visit-conversion", query),
+    apiGet("/trends/order-conversion", query),
     apiGet("/trends/hand-rate", query),
   ]);
 
-  return { summary, revenue, orders, exposure, handRate };
+  return { summary, revenue, orders, exposure, visitUsers, visitConversion, orderConversion, handRate };
 }
 
 async function loadStoresData() {
@@ -326,10 +336,13 @@ async function loadMappingsData() {
     apiGet("/store-mappings/summary", {
       platform: currentSelectedPlatforms(),
       keyword: state.mappingKeyword,
+      mapping_filter: state.mappingFilter,
     }),
     apiGet("/store-mappings/list", {
       limit: 200,
       keyword: state.mappingKeyword,
+      mapping_filter: state.mappingFilter,
+      platform: currentSelectedPlatforms(),
     }),
   ]);
 
@@ -374,6 +387,7 @@ function renderOverview(data) {
     }))
     .sort((a, b) => b.avgTicket - a.avgTicket);
   const coreTable = buildCoreTableData(data.coreTable);
+  const growthEfficiency = buildGrowthEfficiencyTableData(data.growthEfficiency);
 
   document.getElementById("view-overview").innerHTML = `
     <div class="dashboard-grid">
@@ -411,7 +425,7 @@ function renderOverview(data) {
           <div class="panel-header">
             <div>
               <h3>平台核心指标综合对比</h3>
-              <p class="panel-note">营收、订单、占比和客单价的集中视图</p>
+              <p class="panel-note">结果视角，聚焦营收、订单、占比和客单价表现</p>
             </div>
           </div>
           <div class="table-wrap">${renderTable(coreTable.headers, coreTable.rows)}</div>
@@ -439,6 +453,16 @@ function renderOverview(data) {
           <div class="rank-list">${renderRankList(ticketCompare, "avgTicket", false, "currency")}</div>
         </article>
       </div>
+
+      <article class="panel-card">
+        <div class="panel-header">
+          <div>
+            <h3>平台增长漏斗效率对比</h3>
+            <p class="panel-note">过程视角，聚焦曝光到进店、进店到下单两段效率，和上方结果表做角色区分。</p>
+          </div>
+        </div>
+        <div class="table-wrap">${renderTable(growthEfficiency.headers, growthEfficiency.rows)}</div>
+      </article>
     </div>
   `;
 }
@@ -448,6 +472,9 @@ function renderTrends(data) {
     { title: "营业收入趋势", metricLabel: "营业收入", series: buildTrendSeries(data.revenue), format: "currency" },
     { title: "订单量趋势", metricLabel: "订单量", series: buildTrendSeries(data.orders), format: "integer" },
     { title: "曝光量趋势", metricLabel: "曝光量", series: buildTrendSeries(data.exposure), format: "integer" },
+    { title: "进店人数趋势", metricLabel: "进店人数", series: buildTrendSeries(data.visitUsers), format: "integer" },
+    { title: "进店转化率趋势", metricLabel: "进店转化率", series: buildTrendSeries(data.visitConversion), format: "percent" },
+    { title: "下单转化率趋势", metricLabel: "下单转化率", series: buildTrendSeries(data.orderConversion), format: "percent" },
     { title: "到手率趋势", metricLabel: "到手率", series: buildTrendSeries(data.handRate), format: "percent" },
   ];
 
@@ -512,7 +539,7 @@ function renderStores(data) {
               <p class="panel-note">按当前平台筛选结果展示前 10 家标准门店</p>
             </div>
           </div>
-          <div class="rank-list">${renderRankList(topRevenue, "value", false, "currency", true)}</div>
+          <div class="rank-list">${renderRankList(topRevenue, "value", false, "currency", false)}</div>
         </article>
 
         <article class="panel-card">
@@ -522,7 +549,7 @@ function renderStores(data) {
               <p class="panel-note">按当前平台筛选结果展示前 10 家门店</p>
             </div>
           </div>
-          <div class="rank-list">${renderRankList(topOrders, "value", false, "integer", true)}</div>
+          <div class="rank-list">${renderRankList(topOrders, "value", false, "integer", false)}</div>
         </article>
 
         <article class="panel-card">
@@ -532,7 +559,7 @@ function renderStores(data) {
               <p class="panel-note">按当前平台筛选结果展示前 10 家门店</p>
             </div>
           </div>
-          <div class="rank-list">${renderRankList(topConversion, "value", false, "percent", true)}</div>
+          <div class="rank-list">${renderRankList(topConversion, "value", false, "percent", false)}</div>
         </article>
       </div>
     </div>
@@ -594,7 +621,7 @@ function renderRegions(data) {
 
 function renderMappings(data) {
   const platforms = currentSelectedPlatforms();
-  const headers = ["标准门店", "省份", "城市", "运营", ...platforms];
+  const headers = ["标准门店 / ID", "省份", "城市", ...platforms];
   const coverage = data.summary.standard_store_count
     ? data.summary.selected_mapped_count / data.summary.standard_store_count
     : 0;
@@ -620,7 +647,7 @@ function renderMappings(data) {
         <div class="panel-header">
           <div>
             <h3>门店映射关系表</h3>
-            <p class="panel-note">支持平台聚焦和门店名搜索，展示标准门店与平台门店 ID / 名称的对应关系</p>
+            <p class="panel-note">支持按名称或门店 ID 搜索，也支持筛选完全未映射或当前平台仍缺映射的门店。</p>
           </div>
           <div class="mapping-meta">
             <span class="pill">美团 ${formatInteger(data.summary.meituan_mapped_count)}</span>
@@ -632,10 +659,9 @@ function renderMappings(data) {
           ${renderTable(
             headers,
             data.rows.map((row) => [
-              row.standard_store_name || "-",
+              formatStandardStoreCell(row.standard_store_name, row.standard_store_id),
               row.province || "-",
               row.city || "-",
-              row.operator_name || "-",
               ...platforms.map((platform) => formatMappingCell(...mappingCellArgs(row, platform))),
             ]),
           )}
@@ -701,10 +727,14 @@ function renderRankList(items, key, showShare = false, format = "number", showPl
       const width = max ? (value / max) * 100 : 0;
       const label = item.displayLabel || (showPlatform ? `${index + 1}. ${item.label} · ${item.platform}` : `${index + 1}. ${item.label}`);
       const tooltip = item.tooltip ? ` title="${escapeHtml(item.tooltip)}"` : "";
+      const subLabel = item.subLabel ? `<span class="rank-label-sub">${item.subLabel}</span>` : "";
       return `
         <div class="rank-item">
           <div class="rank-top">
-            <span${tooltip}>${label}</span>
+            <span class="rank-label"${tooltip}>
+              <span class="rank-label-main">${label}</span>
+              ${subLabel}
+            </span>
             <span>${formatValue(value, format)}${showShare ? ` · ${formatPercent(item.share)}` : ""}</span>
           </div>
           <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
@@ -723,23 +753,33 @@ function renderLineChart(seriesByPlatform, format, metricLabel = "指标值") {
   const width = 960;
   const height = 260;
   const padding = 32;
+  const leftPadding = 78;
+  const rightPadding = 24;
   const minValue = Math.min(...allPoints.map((point) => point.value), 0);
   const maxValue = Math.max(...allPoints.map((point) => point.value), 1);
   const dates = uniqueValues(allPoints.map((point) => point.date)).sort();
 
   const xForIndex = (index) => {
-    if (dates.length <= 1) return padding;
-    return padding + (index / (dates.length - 1)) * (width - padding * 2);
+    if (dates.length <= 1) return leftPadding;
+    return leftPadding + (index / (dates.length - 1)) * (width - leftPadding - rightPadding);
   };
   const yForValue = (value) => {
     if (maxValue === minValue) return height / 2;
     return height - padding - ((value - minValue) / (maxValue - minValue)) * (height - padding * 2);
   };
 
-  const gridLines = [0, 0.25, 0.5, 0.75, 1].map((step) => {
+  const yAxisSteps = [0, 0.25, 0.5, 0.75, 1];
+  const gridLines = yAxisSteps.map((step) => {
     const y = padding + step * (height - padding * 2);
-    return `<line x1="${padding}" y1="${y}" x2="${width - padding}" y2="${y}" stroke="rgba(97,72,49,0.08)" stroke-dasharray="4 6"></line>`;
+    return `<line x1="${leftPadding}" y1="${y}" x2="${width - rightPadding}" y2="${y}" stroke="rgba(97,72,49,0.08)" stroke-dasharray="4 6"></line>`;
   });
+  const yAxisLabels = yAxisSteps
+    .map((step) => {
+      const value = maxValue - step * (maxValue - minValue);
+      const y = padding + step * (height - padding * 2);
+      return `<text x="${leftPadding - 10}" y="${y + 4}" text-anchor="end" font-size="11" fill="#756455">${formatAxisTickValue(value, format)}</text>`;
+    })
+    .join("");
 
   const polylines = Object.entries(seriesByPlatform)
     .map(([platform, points]) => {
@@ -809,6 +849,7 @@ function renderLineChart(seriesByPlatform, format, metricLabel = "指标值") {
     <div class="panel-note">${legends}</div>
     <svg class="line-chart" viewBox="0 0 ${width} ${height}">
       ${gridLines.join("")}
+      ${yAxisLabels}
       ${polylines}
       ${labels}
     </svg>
@@ -885,6 +926,19 @@ function buildCoreTableData(rows) {
   };
 }
 
+function buildGrowthEfficiencyTableData(rows) {
+  return {
+    headers: ["平台", "曝光人数", "进店人数", "进店转化率", "下单转化率"],
+    rows: rows.map((row) => [
+      row.platform,
+      formatInteger(row.exposure_users),
+      formatInteger(row.visit_users),
+      formatPercent(row.visit_conversion_rate),
+      formatPercent(row.order_conversion_rate),
+    ]),
+  };
+}
+
 function buildTrendSeries(rows) {
   const result = {};
   rows.forEach((row) => {
@@ -905,10 +959,10 @@ function buildTrendSeries(rows) {
 function buildStoreRankItems(rows) {
   return rows.map((row) => ({
     label: row.standard_store_name || "未命名门店",
-    displayLabel: buildStoreDisplayLabel(row),
+    displayLabel: buildStoreDisplayLabel(row, { includePlatform: currentSelectedPlatforms().length > 1 && Boolean(row.platform) }),
     platform: row.platform,
     city: row.city,
-    tooltip: row.standard_store_name || "未命名门店",
+    tooltip: buildStoreRankTooltip(row),
     value: Number(row.metric_value || 0),
   }));
 }
@@ -925,11 +979,26 @@ function currentSelectedPlatforms() {
   return ["美团", "饿了么", "京东"].filter((platform) => state.selectedPlatforms.has(platform));
 }
 
-function buildStoreDisplayLabel(row) {
+function buildStoreDisplayLabel(row, options = {}) {
+  const { includePlatform = true } = options;
   const fullName = row.standard_store_name || "未命名门店";
   const shortName = shortStoreName(fullName);
-  const parts = [row.city, row.platform].filter(Boolean).join(" · ");
+  const parts = [row.city, includePlatform ? row.platform : ""].filter(Boolean).join(" · ");
   return parts ? `${shortName} · ${parts}` : shortName;
+}
+
+function buildStoreRankTooltip(row) {
+  const fullName = row.standard_store_name || "未命名门店";
+  const scope = row.platform_scope
+    ? String(row.platform_scope).split(",").filter(Boolean).join(" / ")
+    : row.platform || "";
+  return scope ? `${fullName} · 汇总平台 ${scope}` : fullName;
+}
+
+function formatStandardStoreCell(name, id) {
+  const safeName = escapeHtml(name || "-");
+  const safeId = escapeHtml(id || "-");
+  return `${safeName}<br><span class="mini-stat">${safeId}</span>`;
 }
 
 function shortStoreName(value) {
@@ -1024,6 +1093,22 @@ function formatValue(value, format) {
   if (format === "integer") return formatInteger(value);
   if (format === "percent") return formatPercent(value);
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(Number(value || 0));
+}
+
+function formatAxisTickValue(value, format) {
+  if (format === "percent") {
+    return `${(Number(value || 0) * 100).toFixed(0)}%`;
+  }
+  if (format === "currency") {
+    return new Intl.NumberFormat("zh-CN", {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(Number(value || 0));
+  }
+  return new Intl.NumberFormat("zh-CN", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(Number(value || 0));
 }
 
 function hexToSoft(hex) {
