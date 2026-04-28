@@ -1,7 +1,7 @@
-const DATASET_PATH = "./data/dashboard_dataset.json";
+const API_ROOT = "/api/v1";
 
 const state = {
-  dataset: null,
+  bootstrap: null,
   currentView: "overview",
   rangeMode: "31",
   selectedPlatforms: new Set(["美团", "饿了么", "京东"]),
@@ -9,7 +9,11 @@ const state = {
   endDate: "",
   province: "",
   city: "",
+  mappingKeyword: "",
+  requestToken: 0,
 };
+
+let mappingSearchDebounceId = null;
 
 const viewTitles = {
   overview: "大盘概览",
@@ -25,42 +29,78 @@ const chartColors = {
   京东: "#ce8d2f",
 };
 
+const viewConfigs = {
+  overview: {
+    sectionId: "view-overview",
+    load: loadOverviewData,
+    render: renderOverview,
+  },
+  trends: {
+    sectionId: "view-trends",
+    load: loadTrendsData,
+    render: renderTrends,
+  },
+  stores: {
+    sectionId: "view-stores",
+    load: loadStoresData,
+    render: renderStores,
+  },
+  regions: {
+    sectionId: "view-regions",
+    load: loadRegionsData,
+    render: renderRegions,
+  },
+  mappings: {
+    sectionId: "view-mappings",
+    load: loadMappingsData,
+    render: renderMappings,
+  },
+};
+
 init();
 
 async function init() {
   bindEvents();
-  const response = await fetch(DATASET_PATH);
-  state.dataset = await response.json();
-  initializeDates();
-  populateLocationOptions();
-  renderAll();
+  try {
+    setStatus("正在连接本地 API", "loading");
+    state.bootstrap = await apiGet("/bootstrap");
+    initializeDates();
+    populateLocationOptions();
+    toggleScopedFilters();
+    await loadAndRenderCurrentView();
+  } catch (error) {
+    console.error(error);
+    setStatus("API 初始化失败", "error");
+    renderCurrentState("初始化失败，请确认 `python3 src/backend/server.py` 已启动。", true);
+  }
 }
 
 function bindEvents() {
   document.querySelectorAll(".nav-item").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       state.currentView = button.dataset.view;
       document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("is-active"));
       button.classList.add("is-active");
       document.querySelectorAll(".view-section").forEach((section) => section.classList.remove("is-visible"));
-      document.getElementById(`view-${state.currentView}`).classList.add("is-visible");
+      document.getElementById(viewConfigs[state.currentView].sectionId).classList.add("is-visible");
       document.getElementById("view-title").textContent = viewTitles[state.currentView];
-      toggleLocationFilters();
+      toggleScopedFilters();
+      await loadAndRenderCurrentView();
     });
   });
 
   document.querySelectorAll(".segment").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       document.querySelectorAll(".segment").forEach((item) => item.classList.remove("is-active"));
       button.classList.add("is-active");
       state.rangeMode = button.dataset.range;
       applyDateRangeMode();
-      renderAll();
+      await loadAndRenderCurrentView();
     });
   });
 
   document.querySelectorAll(".platform-chip").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const platform = button.dataset.platform;
       if (state.selectedPlatforms.has(platform) && state.selectedPlatforms.size > 1) {
         state.selectedPlatforms.delete(platform);
@@ -69,39 +109,49 @@ function bindEvents() {
         state.selectedPlatforms.add(platform);
         button.classList.add("is-active");
       }
-      renderAll();
+      await loadAndRenderCurrentView();
     });
   });
 
-  document.getElementById("start-date").addEventListener("change", (event) => {
+  document.getElementById("start-date").addEventListener("change", async (event) => {
     state.startDate = normalizeInputDate(event.target.value);
     state.rangeMode = "custom";
     highlightCustomRange();
-    renderAll();
+    await loadAndRenderCurrentView();
   });
 
-  document.getElementById("end-date").addEventListener("change", (event) => {
+  document.getElementById("end-date").addEventListener("change", async (event) => {
     state.endDate = normalizeInputDate(event.target.value);
     state.rangeMode = "custom";
     highlightCustomRange();
-    renderAll();
+    await loadAndRenderCurrentView();
   });
 
-  document.getElementById("province-filter").addEventListener("change", (event) => {
+  document.getElementById("province-filter").addEventListener("change", async (event) => {
     state.province = event.target.value;
     state.city = "";
     populateLocationOptions();
-    renderAll();
+    await loadAndRenderCurrentView();
   });
 
-  document.getElementById("city-filter").addEventListener("change", (event) => {
+  document.getElementById("city-filter").addEventListener("change", async (event) => {
     state.city = event.target.value;
-    renderAll();
+    await loadAndRenderCurrentView();
+  });
+
+  document.getElementById("mapping-search").addEventListener("input", (event) => {
+    state.mappingKeyword = event.target.value.trim();
+    if (mappingSearchDebounceId) {
+      window.clearTimeout(mappingSearchDebounceId);
+    }
+    mappingSearchDebounceId = window.setTimeout(async () => {
+      await loadAndRenderCurrentView();
+    }, 180);
   });
 }
 
 function initializeDates() {
-  const { min_date: minDate, max_date: maxDate } = state.dataset.metadata;
+  const { min_date: minDate, max_date: maxDate } = state.bootstrap;
   document.getElementById("dataset-range").textContent = `${minDate} 至 ${maxDate}`;
   state.endDate = maxDate;
   state.startDate = shiftDate(maxDate, -30);
@@ -112,31 +162,30 @@ function initializeDates() {
 function populateLocationOptions() {
   const provinceSelect = document.getElementById("province-filter");
   const citySelect = document.getElementById("city-filter");
-  const rows = filteredStoreRows({ ignoreLocation: true });
+  const locations = state.bootstrap?.locations || [];
 
-  const provinces = uniqueValues(rows.map((row) => row.province)).sort((a, b) => a.localeCompare(b, "zh-CN"));
-  provinceSelect.innerHTML = `<option value="">全部省份</option>${provinces
+  provinceSelect.innerHTML = `<option value="">全部省份</option>${locations
     .map(
-      (province) =>
-        `<option value="${province}" ${province === state.province ? "selected" : ""}>${displayProvince(province)}</option>`,
+      (item) =>
+        `<option value="${item.province}" ${item.province === state.province ? "selected" : ""}>${displayProvince(item.province)}</option>`,
     )
     .join("")}`;
 
-  const cities = uniqueValues(
-    rows
-      .filter((row) => !state.province || row.province === state.province)
-      .map((row) => row.city),
-  ).sort((a, b) => a.localeCompare(b, "zh-CN"));
-
+  const selectedLocation = locations.find((item) => item.province === state.province);
+  const cities = selectedLocation ? selectedLocation.cities : state.bootstrap?.cities || [];
   citySelect.innerHTML = `<option value="">全部城市</option>${cities
     .map((city) => `<option value="${city}" ${city === state.city ? "selected" : ""}>${city}</option>`)
     .join("")}`;
 }
 
-function toggleLocationFilters() {
+function toggleScopedFilters() {
   const isLocationView = state.currentView === "stores";
+  const isMappingView = state.currentView === "mappings";
   document.querySelectorAll(".filter-location").forEach((node) => {
     node.style.display = isLocationView ? "grid" : "none";
+  });
+  document.querySelectorAll(".filter-mapping").forEach((node) => {
+    node.style.display = isMappingView ? "grid" : "none";
   });
 }
 
@@ -146,7 +195,7 @@ function highlightCustomRange() {
 }
 
 function applyDateRangeMode() {
-  const maxDate = state.dataset.metadata.max_date;
+  const maxDate = state.bootstrap.max_date;
   if (state.rangeMode === "7") {
     state.endDate = maxDate;
     state.startDate = shiftDate(maxDate, -6);
@@ -162,55 +211,185 @@ function syncDateInputs() {
   document.getElementById("end-date").value = denormalizeInputDate(state.endDate);
 }
 
-function filteredPlatformRows() {
-  return state.dataset.platformDailySummary.filter((row) => {
-    return isDateInRange(row.biz_date) && state.selectedPlatforms.has(row.platform);
+async function loadAndRenderCurrentView() {
+  const viewConfig = viewConfigs[state.currentView];
+  const requestToken = ++state.requestToken;
+  renderViewState(viewConfig.sectionId, "正在加载数据...");
+  setStatus("API 数据加载中", "loading");
+
+  try {
+    const payload = await viewConfig.load();
+    if (requestToken !== state.requestToken) return;
+    viewConfig.render(payload);
+    initializeChartTooltips();
+    setStatus("已连接本地 API", "ready");
+  } catch (error) {
+    if (requestToken !== state.requestToken) return;
+    console.error(error);
+    setStatus("API 请求失败", "error");
+    renderViewState(viewConfig.sectionId, "数据加载失败，请确认后端服务和数据库已准备完成。", true);
+  }
+}
+
+function renderCurrentState(message, isError = false) {
+  renderViewState(viewConfigs[state.currentView].sectionId, message, isError);
+}
+
+function renderViewState(sectionId, message, isError = false) {
+  document.getElementById(sectionId).innerHTML = `
+    <article class="panel-card state-card ${isError ? "state-card--error" : ""}">
+      <h3>${isError ? "加载失败" : "正在处理中"}</h3>
+      <p class="panel-note">${message}</p>
+    </article>
+  `;
+}
+
+function setStatus(text, status) {
+  document.getElementById("data-status").textContent = text;
+  const dot = document.querySelector(".status-dot");
+  dot.classList.remove("is-loading", "is-error");
+  if (status === "loading") dot.classList.add("is-loading");
+  if (status === "error") dot.classList.add("is-error");
+}
+
+function buildQuery({ includeLocation = false } = {}) {
+  const params = {
+    start_date: state.startDate,
+    end_date: state.endDate,
+    platform: [...state.selectedPlatforms],
+  };
+
+  if (includeLocation) {
+    if (state.province) params.province = state.province;
+    if (state.city) params.city = state.city;
+  }
+
+  return params;
+}
+
+async function loadOverviewData() {
+  const query = buildQuery();
+  const [summary, revenueShare, orderCompare, ticketCompare, coreTable] = await Promise.all([
+    apiGet("/overview/summary", query),
+    apiGet("/overview/revenue-share", query),
+    apiGet("/overview/order-compare", query),
+    apiGet("/overview/ticket-compare", query),
+    apiGet("/overview/core-table", query),
+  ]);
+
+  return { summary, revenueShare, orderCompare, ticketCompare, coreTable };
+}
+
+async function loadTrendsData() {
+  const query = buildQuery();
+  const [summary, revenue, orders, exposure, handRate] = await Promise.all([
+    apiGet("/trends/summary", query),
+    apiGet("/trends/revenue", query),
+    apiGet("/trends/orders", query),
+    apiGet("/trends/exposure", query),
+    apiGet("/trends/hand-rate", query),
+  ]);
+
+  return { summary, revenue, orders, exposure, handRate };
+}
+
+async function loadStoresData() {
+  const query = {
+    ...buildQuery({ includeLocation: true }),
+    limit: 10,
+  };
+  const [summary, activeTrend, topRevenue, topOrders, topConversion] = await Promise.all([
+    apiGet("/stores/summary", query),
+    apiGet("/stores/active-trend", query),
+    apiGet("/stores/top-revenue", query),
+    apiGet("/stores/top-orders", query),
+    apiGet("/stores/top-conversion", query),
+  ]);
+
+  return { summary, activeTrend, topRevenue, topOrders, topConversion };
+}
+
+async function loadRegionsData() {
+  const query = buildQuery();
+  const [summary, topRevenue, topOrders, topStoreCount] = await Promise.all([
+    apiGet("/regions/summary", query),
+    apiGet("/regions/top-revenue", query),
+    apiGet("/regions/top-orders", query),
+    apiGet("/regions/top-store-count", query),
+  ]);
+
+  return { summary, topRevenue, topOrders, topStoreCount };
+}
+
+async function loadMappingsData() {
+  const [summary, rows] = await Promise.all([
+    apiGet("/store-mappings/summary", {
+      platform: currentSelectedPlatforms(),
+      keyword: state.mappingKeyword,
+    }),
+    apiGet("/store-mappings/list", {
+      limit: 200,
+      keyword: state.mappingKeyword,
+    }),
+  ]);
+
+  return { summary, rows };
+}
+
+async function apiGet(path, params = {}) {
+  const url = new URL(`${API_ROOT}${path}`, window.location.origin);
+  Object.entries(params).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value.forEach((item) => url.searchParams.append(key, item));
+      return;
+    }
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, value);
+    }
   });
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`API ${url.pathname} 请求失败: ${response.status} ${body}`);
+  }
+  return response.json();
 }
 
-function filteredStoreRows(options = {}) {
-  return state.dataset.storeDailySummary.filter((row) => {
-    if (!isDateInRange(row.biz_date) || !state.selectedPlatforms.has(row.platform)) return false;
-    if (!options.ignoreLocation && state.province && row.province !== state.province) return false;
-    if (!options.ignoreLocation && state.city && row.city !== state.city) return false;
-    return true;
-  });
-}
-
-function filteredCityRows() {
-  return state.dataset.cityDailySummary.filter((row) => {
-    return isDateInRange(row.biz_date) && state.selectedPlatforms.has(row.platform);
-  });
-}
-
-function isDateInRange(dateValue) {
-  return dateValue >= state.startDate && dateValue <= state.endDate;
-}
-
-function renderAll() {
-  renderOverview();
-  renderTrends();
-  renderStores();
-  renderRegions();
-  renderMappings();
-  toggleLocationFilters();
-}
-
-function renderOverview() {
-  const rows = filteredPlatformRows();
-  const summary = aggregateOverview(rows);
-  const revenueShare = aggregateByPlatform(rows, "revenue");
-  const orderCompare = aggregateByPlatform(rows, "valid_orders");
-  const ticketCompare = aggregateTicketByPlatform(rows);
-  const coreTable = buildCoreTable(rows);
+function renderOverview(data) {
+  const revenueShare = data.revenueShare.map((row) => ({
+    label: row.platform,
+    value: Number(row.revenue || 0),
+    share: Number(row.share || 0),
+  }));
+  const orderCompare = data.orderCompare.map((row) => ({
+    label: row.platform,
+    value: Number(row.valid_orders || 0),
+    share: 0,
+  }));
+  const ticketCompare = data.ticketCompare
+    .map((row) => ({
+      label: row.platform,
+      avgTicket: Number(row.avg_ticket || 0),
+    }))
+    .sort((a, b) => b.avgTicket - a.avgTicket);
+  const coreTable = buildCoreTableData(data.coreTable);
 
   document.getElementById("view-overview").innerHTML = `
     <div class="dashboard-grid">
       ${renderMetricCards([
-        { label: "总营收", value: formatCurrency(summary.totalRevenue), sub: `统计周期 ${state.startDate} - ${state.endDate}` },
-        { label: "总订单量", value: formatInteger(summary.totalOrders), sub: "三平台有效订单合计" },
-        { label: "活跃门店", value: formatInteger(summary.activeStores), sub: "有效订单大于 0 的门店数" },
-        { label: "覆盖省份", value: formatInteger(summary.coveredProvinces), sub: `覆盖城市 ${formatInteger(summary.coveredCities)} 个` },
+        {
+          label: "总营收",
+          value: formatCurrency(data.summary.total_revenue),
+          sub: `统计周期 ${state.startDate} - ${state.endDate}`,
+        },
+        { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: "三平台有效订单合计" },
+        { label: "活跃门店", value: formatInteger(data.summary.active_stores), sub: "有效订单大于 0 的门店数" },
+        {
+          label: "覆盖省份",
+          value: formatInteger(data.summary.covered_provinces),
+          sub: `覆盖城市 ${formatInteger(data.summary.covered_cities)} 个`,
+        },
       ])}
 
       <div class="chart-grid-2">
@@ -220,11 +399,11 @@ function renderOverview() {
               <h3>平台营收贡献占比</h3>
               <p class="panel-note">各平台收入占三平台总收入的比例</p>
             </div>
-            <span class="mini-stat">总收入 ${formatCurrency(summary.totalRevenue)}</span>
+            <span class="mini-stat">总收入 ${formatCurrency(data.summary.total_revenue)}</span>
           </div>
           <div class="donut-wrap">
             ${renderDonutChart(revenueShare)}
-            <div class="legend-list">${renderRankList(revenueShare, "share", true, "share")}</div>
+            <div class="legend-list">${renderRankList(revenueShare, "share", false, "percent")}</div>
           </div>
         </article>
 
@@ -247,7 +426,7 @@ function renderOverview() {
               <p class="panel-note">横向平台，纵向有效订单量</p>
             </div>
           </div>
-          <div class="rank-list">${renderRankList(orderCompare, "value")}</div>
+          <div class="rank-list">${renderRankList(orderCompare, "value", false, "integer")}</div>
         </article>
 
         <article class="panel-card">
@@ -264,29 +443,26 @@ function renderOverview() {
   `;
 }
 
-function renderTrends() {
-  const rows = filteredPlatformRows();
-  const summary = aggregateOverview(rows);
+function renderTrends(data) {
   const trendMetrics = [
-    { title: "营业收入趋势", key: "revenue", format: "currency" },
-    { title: "订单量趋势", key: "valid_orders", format: "integer" },
-    { title: "曝光量趋势", key: "exposure_users", format: "integer" },
-    { title: "到手率趋势", key: "hand_rate", format: "percent" },
+    { title: "营业收入趋势", metricLabel: "营业收入", series: buildTrendSeries(data.revenue), format: "currency" },
+    { title: "订单量趋势", metricLabel: "订单量", series: buildTrendSeries(data.orders), format: "integer" },
+    { title: "曝光量趋势", metricLabel: "曝光量", series: buildTrendSeries(data.exposure), format: "integer" },
+    { title: "到手率趋势", metricLabel: "到手率", series: buildTrendSeries(data.handRate), format: "percent" },
   ];
 
   document.getElementById("view-trends").innerHTML = `
     <div class="dashboard-grid">
       ${renderMetricCards([
-        { label: "总营收", value: formatCurrency(summary.totalRevenue), sub: "趋势页汇总" },
-        { label: "总订单量", value: formatInteger(summary.totalOrders), sub: "趋势页汇总" },
-        { label: "活跃门店", value: formatInteger(summary.activeStores), sub: "趋势页汇总" },
+        { label: "总营收", value: formatCurrency(data.summary.total_revenue), sub: "趋势页汇总" },
+        { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: "趋势页汇总" },
+        { label: "活跃门店", value: formatInteger(data.summary.active_stores), sub: "趋势页汇总" },
         { label: "周期范围", value: `${state.startDate} - ${state.endDate}`, sub: "当前筛选区间" },
       ])}
       <div class="dashboard-grid">
         ${trendMetrics
-          .map((metric) => {
-            const series = buildTrendSeries(rows, metric.key);
-            return `
+          .map(
+            (metric) => `
               <article class="panel-card">
                 <div class="panel-header">
                   <div>
@@ -294,30 +470,27 @@ function renderTrends() {
                     <p class="panel-note">统计周期内三平台按日期变化</p>
                   </div>
                 </div>
-                ${renderLineChart(series, metric.format)}
+                ${renderLineChart(metric.series, metric.format, metric.metricLabel)}
               </article>
-            `;
-          })
+            `,
+          )
           .join("")}
       </div>
     </div>
   `;
 }
 
-function renderStores() {
-  const rows = filteredStoreRows();
-  const summary = aggregateStoreOverview(rows);
-  const activeTrend = buildActiveStoreTrend(rows);
-  const topRevenue = aggregateTopStores(rows, "revenue");
-  const topOrders = aggregateTopStores(rows, "valid_orders");
-  const topConversion = aggregateTopStores(rows, "order_conversion_rate", true);
+function renderStores(data) {
+  const topRevenue = buildStoreRankItems(data.topRevenue);
+  const topOrders = buildStoreRankItems(data.topOrders);
+  const topConversion = buildStoreRankItems(data.topConversion);
 
   document.getElementById("view-stores").innerHTML = `
     <div class="dashboard-grid">
       ${renderMetricCards([
-        { label: "总营收", value: formatCurrency(summary.totalRevenue), sub: locationSubtitle() },
-        { label: "总订单量", value: formatInteger(summary.totalOrders), sub: locationSubtitle() },
-        { label: "活跃门店", value: formatInteger(summary.activeStores), sub: "按门店明细统计" },
+        { label: "总营收", value: formatCurrency(data.summary.total_revenue), sub: locationSubtitle() },
+        { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: locationSubtitle() },
+        { label: "活跃门店", value: formatInteger(data.summary.active_stores), sub: "按门店明细统计" },
         { label: "统计区间", value: `${state.startDate} - ${state.endDate}`, sub: "支持省份 / 城市筛选" },
       ])}
 
@@ -328,15 +501,15 @@ function renderStores() {
             <p class="panel-note">统计周期内三平台有效门店数变化</p>
           </div>
         </div>
-        ${renderLineChart(activeTrend, "integer")}
+        ${renderLineChart(buildTrendSeries(data.activeTrend), "integer", "活跃门店数")}
       </article>
 
       <div class="chart-grid-3">
         <article class="panel-card">
           <div class="panel-header">
             <div>
-              <h3>门店营收 Top20</h3>
-              <p class="panel-note">按标准门店聚合</p>
+              <h3>门店营收 Top10</h3>
+              <p class="panel-note">按当前平台筛选结果展示前 10 家标准门店</p>
             </div>
           </div>
           <div class="rank-list">${renderRankList(topRevenue, "value", false, "currency", true)}</div>
@@ -345,8 +518,8 @@ function renderStores() {
         <article class="panel-card">
           <div class="panel-header">
             <div>
-              <h3>门店订单量 Top20</h3>
-              <p class="panel-note">按有效订单降序</p>
+              <h3>门店订单量 Top10</h3>
+              <p class="panel-note">按当前平台筛选结果展示前 10 家门店</p>
             </div>
           </div>
           <div class="rank-list">${renderRankList(topOrders, "value", false, "integer", true)}</div>
@@ -355,8 +528,8 @@ function renderStores() {
         <article class="panel-card">
           <div class="panel-header">
             <div>
-              <h3>门店转化率 Top20</h3>
-              <p class="panel-note">按下单转化率排序</p>
+              <h3>门店转化率 Top10</h3>
+              <p class="panel-note">按当前平台筛选结果展示前 10 家门店</p>
             </div>
           </div>
           <div class="rank-list">${renderRankList(topConversion, "value", false, "percent", true)}</div>
@@ -366,19 +539,21 @@ function renderStores() {
   `;
 }
 
-function renderRegions() {
-  const rows = filteredCityRows();
-  const summary = aggregateCityOverview(rows);
-  const topRevenue = aggregateTopCities(rows, "revenue");
-  const topOrders = aggregateTopCities(rows, "valid_orders");
-  const topStoreCount = aggregateTopCities(rows, "store_count");
+function renderRegions(data) {
+  const topRevenue = buildCityRankItems(data.topRevenue);
+  const topOrders = buildCityRankItems(data.topOrders);
+  const topStoreCount = buildCityRankItems(data.topStoreCount);
 
   document.getElementById("view-regions").innerHTML = `
     <div class="dashboard-grid">
       ${renderMetricCards([
-        { label: "总营收", value: formatCurrency(summary.totalRevenue), sub: "地域分析汇总" },
-        { label: "总订单量", value: formatInteger(summary.totalOrders), sub: "地域分析汇总" },
-        { label: "覆盖城市", value: formatInteger(summary.coveredCities), sub: `覆盖省份 ${formatInteger(summary.coveredProvinces)} 个` },
+        { label: "总营收", value: formatCurrency(data.summary.total_revenue), sub: "地域分析汇总" },
+        { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: "地域分析汇总" },
+        {
+          label: "覆盖城市",
+          value: formatInteger(data.summary.covered_cities),
+          sub: `覆盖省份 ${formatInteger(data.summary.covered_provinces)} 个`,
+        },
         { label: "统计区间", value: `${state.startDate} - ${state.endDate}`, sub: "城市维度分析" },
       ])}
 
@@ -417,55 +592,55 @@ function renderRegions() {
   `;
 }
 
-function renderMappings() {
-  const rows = state.dataset.storeMappings;
-  const filtered = rows.filter((row) => {
-    if (state.province && row.province !== state.province) return false;
-    if (state.city && row.city !== state.city) return false;
-    return true;
-  });
-
-  const total = filtered.length;
-  const meituanOnline = filtered.filter((row) => row.meituan_store_id).length;
-  const elemeOnline = filtered.filter((row) => row.eleme_store_id).length;
-  const jdOnline = filtered.filter((row) => row.jd_store_id).length;
+function renderMappings(data) {
+  const platforms = currentSelectedPlatforms();
+  const headers = ["标准门店", "省份", "城市", "运营", ...platforms];
+  const coverage = data.summary.standard_store_count
+    ? data.summary.selected_mapped_count / data.summary.standard_store_count
+    : 0;
 
   document.getElementById("view-mappings").innerHTML = `
     <div class="dashboard-grid">
       ${renderMetricCards([
-        { label: "标准门店数", value: formatInteger(total), sub: "当前筛选范围内的标准门店" },
-        { label: "美团已映射", value: formatInteger(meituanOnline), sub: "门店 ID 已关联" },
-        { label: "饿了么已映射", value: formatInteger(elemeOnline), sub: "门店 ID 已关联" },
-        { label: "京东已映射", value: formatInteger(jdOnline), sub: "门店 ID 已关联" },
+        { label: "标准门店数", value: formatInteger(data.summary.standard_store_count), sub: "搜索结果范围内的标准门店" },
+        {
+          label: "已映射门店",
+          value: formatInteger(data.summary.selected_mapped_count),
+          sub: `${platforms.join(" / ")} 范围内至少关联 1 个真实门店 ID`,
+        },
+        {
+          label: "未映射门店",
+          value: formatInteger(data.summary.selected_unmapped_count),
+          sub: `${platforms.join(" / ")} 范围内仍需补齐映射`,
+        },
+        { label: "映射覆盖率", value: formatPercent(coverage), sub: "按当前平台筛选口径统计" },
       ])}
 
       <article class="panel-card">
         <div class="panel-header">
           <div>
             <h3>门店映射关系表</h3>
-            <p class="panel-note">展示标准门店与三平台门店 ID / 名称的对应关系</p>
+            <p class="panel-note">支持平台聚焦和门店名搜索，展示标准门店与平台门店 ID / 名称的对应关系</p>
           </div>
           <div class="mapping-meta">
-            <span class="pill">美团 ${formatInteger(meituanOnline)}</span>
-            <span class="pill">饿了么 ${formatInteger(elemeOnline)}</span>
-            <span class="pill">京东 ${formatInteger(jdOnline)}</span>
+            <span class="pill">美团 ${formatInteger(data.summary.meituan_mapped_count)}</span>
+            <span class="pill">饿了么 ${formatInteger(data.summary.eleme_mapped_count)}</span>
+            <span class="pill">京东 ${formatInteger(data.summary.jd_mapped_count)}</span>
           </div>
         </div>
         <div class="table-wrap">
           ${renderTable(
-            ["标准门店", "省份", "城市", "运营", "美团", "饿了么", "京东"],
-            filtered.slice(0, 120).map((row) => [
+            headers,
+            data.rows.map((row) => [
               row.standard_store_name || "-",
               row.province || "-",
               row.city || "-",
               row.operator_name || "-",
-              formatMappingCell(row.meituan_store_id, row.meituan_store_name),
-              formatMappingCell(row.eleme_store_id, row.eleme_store_name),
-              formatMappingCell(row.jd_store_id, row.jd_store_name),
+              ...platforms.map((platform) => formatMappingCell(...mappingCellArgs(row, platform))),
             ]),
           )}
         </div>
-        <p class="empty-note">当前原型默认最多展示 120 行，正式版可改为分页或搜索。</p>
+        <p class="empty-note">当前展示 ${formatInteger(data.rows.length)} 条结果，原型默认最多返回 200 行。</p>
       </article>
     </div>
   `;
@@ -508,23 +683,28 @@ function renderDonutChart(items) {
     <svg class="donut-chart" viewBox="0 0 220 220" aria-hidden="true">
       <circle cx="110" cy="110" r="${radius}" fill="none" stroke="rgba(97,72,49,0.08)" stroke-width="28"></circle>
       <g transform="rotate(-90 110 110)">${segments}</g>
-      <text x="110" y="102" text-anchor="middle" font-size="14" fill="${"#756455"}">三平台</text>
-      <text x="110" y="126" text-anchor="middle" font-size="26" font-weight="700" fill="${"#2f241c"}">${items.length}</text>
+      <text x="110" y="102" text-anchor="middle" font-size="14" fill="#756455">三平台</text>
+      <text x="110" y="126" text-anchor="middle" font-size="26" font-weight="700" fill="#2f241c">${items.length}</text>
     </svg>
   `;
 }
 
 function renderRankList(items, key, showShare = false, format = "number", showPlatform = false) {
-  const max = Math.max(...items.map((item) => item[key] || 0), 0);
+  if (!items.length) {
+    return `<p class="empty-note">当前筛选条件下暂无数据。</p>`;
+  }
+
+  const max = Math.max(...items.map((item) => Number(item[key] || 0)), 0);
   return items
     .map((item, index) => {
-      const value = item[key] || 0;
+      const value = Number(item[key] || 0);
       const width = max ? (value / max) * 100 : 0;
-      const label = showPlatform ? `${index + 1}. ${item.label} · ${item.platform}` : `${index + 1}. ${item.label}`;
+      const label = item.displayLabel || (showPlatform ? `${index + 1}. ${item.label} · ${item.platform}` : `${index + 1}. ${item.label}`);
+      const tooltip = item.tooltip ? ` title="${escapeHtml(item.tooltip)}"` : "";
       return `
         <div class="rank-item">
           <div class="rank-top">
-            <span>${label}</span>
+            <span${tooltip}>${label}</span>
             <span>${formatValue(value, format)}${showShare ? ` · ${formatPercent(item.share)}` : ""}</span>
           </div>
           <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
@@ -534,8 +714,12 @@ function renderRankList(items, key, showShare = false, format = "number", showPl
     .join("");
 }
 
-function renderLineChart(seriesByPlatform, format) {
+function renderLineChart(seriesByPlatform, format, metricLabel = "指标值") {
   const allPoints = Object.values(seriesByPlatform).flat();
+  if (!allPoints.length) {
+    return `<p class="empty-note">当前筛选条件下暂无趋势数据。</p>`;
+  }
+
   const width = 960;
   const height = 260;
   const padding = 32;
@@ -562,6 +746,10 @@ function renderLineChart(seriesByPlatform, format) {
       const pointMap = new Map(points.map((point) => [point.date, point.value]));
       const mapped = dates.map((date, index) => ({
         x: xForIndex(index),
+        date,
+        platform,
+        hasValue: pointMap.has(date),
+        rawValue: pointMap.get(date),
         y: yForValue(pointMap.get(date) ?? minValue),
       }));
       const path = mapped.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
@@ -570,7 +758,19 @@ function renderLineChart(seriesByPlatform, format) {
         ${mapped
           .map(
             (point) =>
-              `<circle cx="${point.x}" cy="${point.y}" r="3.5" fill="${chartColors[platform]}" stroke="#fff7ef" stroke-width="1.5"></circle>`,
+              point.hasValue
+                ? `
+                  <circle cx="${point.x}" cy="${point.y}" r="3.5" fill="${chartColors[platform]}" stroke="#fff7ef" stroke-width="1.5" pointer-events="none"></circle>
+                  <circle
+                    class="chart-hit-point"
+                    cx="${point.x}"
+                    cy="${point.y}"
+                    r="12"
+                    fill="transparent"
+                    data-tooltip="${escapeHtml(`${point.date.slice(5)} · ${platform} · ${metricLabel} · ${formatValue(point.rawValue ?? 0, format)}`)}"
+                  ></circle>
+                `
+                : "",
           )
           .join("")}
       `;
@@ -616,7 +816,47 @@ function renderLineChart(seriesByPlatform, format) {
   `;
 }
 
+function initializeChartTooltips() {
+  const existingTooltip = document.getElementById("chart-tooltip");
+  const tooltip = existingTooltip || createChartTooltip();
+
+  document.querySelectorAll(".chart-hit-point").forEach((point) => {
+    point.addEventListener("mouseenter", (event) => {
+      showChartTooltip(tooltip, event.currentTarget.dataset.tooltip || "", event);
+    });
+    point.addEventListener("mousemove", (event) => {
+      showChartTooltip(tooltip, event.currentTarget.dataset.tooltip || "", event);
+    });
+    point.addEventListener("mouseleave", () => {
+      hideChartTooltip(tooltip);
+    });
+  });
+}
+
+function createChartTooltip() {
+  const tooltip = document.createElement("div");
+  tooltip.id = "chart-tooltip";
+  tooltip.className = "chart-tooltip";
+  document.body.appendChild(tooltip);
+  return tooltip;
+}
+
+function showChartTooltip(tooltip, text, event) {
+  tooltip.textContent = text;
+  tooltip.classList.add("is-visible");
+  tooltip.style.left = `${event.clientX + 14}px`;
+  tooltip.style.top = `${event.clientY + 14}px`;
+}
+
+function hideChartTooltip(tooltip) {
+  tooltip.classList.remove("is-visible");
+}
+
 function renderTable(headers, rows) {
+  if (!rows.length) {
+    return `<p class="empty-note">当前筛选条件下暂无数据。</p>`;
+  }
+
   return `
     <table>
       <thead>
@@ -631,239 +871,108 @@ function renderTable(headers, rows) {
   `;
 }
 
-function aggregateOverview(rows) {
-  const storeSet = new Set();
-  const provinceSet = new Set();
-  const citySet = new Set();
-
-  let totalRevenue = 0;
-  let totalOrders = 0;
-
-  rows.forEach((row) => {
-    totalRevenue += Number(row.revenue || 0);
-    totalOrders += Number(row.valid_orders || 0);
-    if (Number(row.active_store_count || 0) > 0) storeSet.add(`${row.platform}:${row.biz_date}`);
-    if (row.province_count) {
-      provinceSet.add(row.biz_date);
-    }
-    if (row.city_count) {
-      citySet.add(row.biz_date);
-    }
-  });
-
-  const rawStoreRows = filteredStoreRows();
-  const activeStoreIds = new Set(
-    rawStoreRows
-      .filter((row) => Number(row.valid_orders || 0) > 0)
-      .map((row) => storeIdentity(row))
-      .filter(Boolean),
-  );
-  const provinces = uniqueValues(rawStoreRows.map((row) => row.province));
-  const cities = uniqueValues(rawStoreRows.map((row) => row.city));
-
-  return {
-    totalRevenue,
-    totalOrders,
-    activeStores: activeStoreIds.size,
-    coveredProvinces: provinces.length,
-    coveredCities: cities.length,
-  };
-}
-
-function aggregateStoreOverview(rows) {
-  return {
-    totalRevenue: sum(rows, "revenue"),
-    totalOrders: sum(rows, "valid_orders"),
-    activeStores: uniqueValues(
-      rows
-        .filter((row) => Number(row.valid_orders || 0) > 0)
-        .map((row) => storeIdentity(row))
-        .filter(Boolean),
-    ).length,
-  };
-}
-
-function aggregateCityOverview(rows) {
-  return {
-    totalRevenue: sum(rows, "revenue"),
-    totalOrders: sum(rows, "valid_orders"),
-    coveredCities: uniqueValues(rows.map((row) => row.city)).length,
-    coveredProvinces: uniqueValues(rows.map((row) => row.province)).length,
-  };
-}
-
-function aggregateByPlatform(rows, field) {
-  const map = new Map();
-  rows.forEach((row) => {
-    const platform = row.platform;
-    map.set(platform, (map.get(platform) || 0) + Number(row[field] || 0));
-  });
-  const total = [...map.values()].reduce((sum, value) => sum + value, 0);
-  return [...map.entries()]
-    .map(([label, value]) => ({ label, value, share: total ? value / total : 0 }))
-    .sort((a, b) => b.value - a.value);
-}
-
-function aggregateTicketByPlatform(rows) {
-  const map = new Map();
-  rows.forEach((row) => {
-    if (!map.has(row.platform)) {
-      map.set(row.platform, { paid: 0, orders: 0 });
-    }
-    const current = map.get(row.platform);
-    current.paid += Number(row.customer_paid || 0);
-    current.orders += Number(row.valid_orders || 0);
-  });
-  return [...map.entries()]
-    .map(([label, current]) => ({
-      label,
-      avgTicket: current.orders ? current.paid / current.orders : 0,
-    }))
-    .sort((a, b) => b.avgTicket - a.avgTicket);
-}
-
-function buildCoreTable(rows) {
-  const revenueRows = aggregateByPlatform(rows, "revenue");
-  const orderRows = aggregateByPlatform(rows, "valid_orders");
-  const ticketRows = aggregateTicketByPlatform(rows);
-  const orderMap = new Map(orderRows.map((row) => [row.label, row]));
-  const ticketMap = new Map(ticketRows.map((row) => [row.label, row]));
-
+function buildCoreTableData(rows) {
   return {
     headers: ["平台", "营业收入", "收入占比", "订单量", "订单占比", "客单价"],
-    rows: revenueRows.map((row) => [
-      row.label,
-      formatCurrency(row.value),
-      formatPercent(row.share),
-      formatInteger(orderMap.get(row.label)?.value || 0),
-      formatPercent(orderMap.get(row.label)?.share || 0),
-      formatCurrency(ticketMap.get(row.label)?.avgTicket || 0),
+    rows: rows.map((row) => [
+      row.platform,
+      formatCurrency(row.revenue),
+      formatPercent(row.revenue_share),
+      formatInteger(row.valid_orders),
+      formatPercent(row.order_share),
+      formatCurrency(row.avg_ticket),
     ]),
   };
 }
 
-function buildTrendSeries(rows, field) {
-  const grouped = new Map();
-  rows.forEach((row) => {
-    const key = `${row.platform}__${row.biz_date}`;
-    const current = grouped.get(key) || { platform: row.platform, date: row.biz_date, value: 0, gross: 0, revenue: 0 };
-    if (field === "hand_rate") {
-      current.gross += Number(row.gross_amount || 0);
-      current.revenue += Number(row.revenue || 0);
-      current.value = current.gross ? current.revenue / current.gross : 0;
-    } else {
-      current.value += Number(row[field] || 0);
-    }
-    grouped.set(key, current);
-  });
-
+function buildTrendSeries(rows) {
   const result = {};
-  [...grouped.values()].forEach((item) => {
-    if (!result[item.platform]) result[item.platform] = [];
-    result[item.platform].push({ date: item.date, value: item.value });
-  });
-
-  Object.keys(result).forEach((platform) => {
-    result[platform].sort((a, b) => a.date.localeCompare(b.date));
-  });
-  return result;
-}
-
-function buildActiveStoreTrend(rows) {
-  const grouped = new Map();
   rows.forEach((row) => {
-    if (!row.standard_store_id || Number(row.valid_orders || 0) <= 0) return;
-    const key = `${row.platform}__${row.biz_date}`;
-    if (!grouped.has(key)) {
-      grouped.set(key, new Set());
-    }
-    grouped.get(key).add(row.standard_store_id);
-  });
-
-  const result = {};
-  [...grouped.entries()].forEach(([key, stores]) => {
-    const [platform, date] = key.split("__");
-    if (!result[platform]) result[platform] = [];
-    result[platform].push({ date, value: stores.size });
-  });
-
-  Object.keys(result).forEach((platform) => {
-    result[platform].sort((a, b) => a.date.localeCompare(b.date));
-  });
-  return result;
-}
-
-function aggregateTopStores(rows, field, useAverage = false) {
-  const grouped = new Map();
-  rows.forEach((row) => {
-    const label = row.standard_store_name || row.platform_store_name || "未命名门店";
-    const key = `${label}__${row.platform}`;
-    const current = grouped.get(key) || {
-      label,
-      platform: row.platform,
-      province: row.province,
-      city: row.city,
-      total: 0,
-      count: 0,
-    };
-    current.total += Number(row[field] || 0);
-    current.count += 1;
-    grouped.set(key, current);
-  });
-
-  return [...grouped.values()]
-    .map((item) => ({
-      label: item.label,
-      platform: item.platform,
-      value: useAverage ? item.total / item.count : item.total,
-    }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 20);
-}
-
-function aggregateTopCities(rows, field) {
-  if (field === "store_count") {
-    const storeRows = filteredStoreRows();
-    const groupedStores = new Map();
-    storeRows.forEach((row) => {
-      const identity = storeIdentity(row);
-      if (!identity) return;
-      const label = `${displayProvince(row.province || "-")} / ${row.city || "-"}`;
-      const key = `${label}__${row.platform}`;
-      if (!groupedStores.has(key)) {
-        groupedStores.set(key, new Set());
-      }
-      groupedStores.get(key).add(identity);
+    if (!result[row.platform]) result[row.platform] = [];
+    result[row.platform].push({
+      date: row.biz_date,
+      value: Number(row.metric_value || 0),
     });
-    return [...groupedStores.entries()]
-      .map(([key, set]) => {
-        const [label, platform] = key.split("__");
-        return { label, platform, value: set.size };
-      })
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 20);
-  }
-
-  const grouped = new Map();
-  rows.forEach((row) => {
-    const label = `${displayProvince(row.province || "-")} / ${row.city || "-"}`;
-    const key = `${label}__${row.platform}`;
-    const current = grouped.get(key) || { label, platform: row.platform, value: 0 };
-    current.value += Number(row[field] || 0);
-    grouped.set(key, current);
   });
-  return [...grouped.values()].sort((a, b) => b.value - a.value).slice(0, 20);
+
+  Object.keys(result).forEach((platform) => {
+    result[platform].sort((a, b) => a.date.localeCompare(b.date));
+  });
+
+  return result;
+}
+
+function buildStoreRankItems(rows) {
+  return rows.map((row) => ({
+    label: row.standard_store_name || "未命名门店",
+    displayLabel: buildStoreDisplayLabel(row),
+    platform: row.platform,
+    city: row.city,
+    tooltip: row.standard_store_name || "未命名门店",
+    value: Number(row.metric_value || 0),
+  }));
+}
+
+function buildCityRankItems(rows) {
+  return rows.map((row) => ({
+    label: row.province ? `${displayProvince(row.province)} / ${row.city || "-"}` : row.city || "-",
+    platform: row.platform,
+    value: Number(row.metric_value || 0),
+  }));
+}
+
+function currentSelectedPlatforms() {
+  return ["美团", "饿了么", "京东"].filter((platform) => state.selectedPlatforms.has(platform));
+}
+
+function buildStoreDisplayLabel(row) {
+  const fullName = row.standard_store_name || "未命名门店";
+  const shortName = shortStoreName(fullName);
+  const parts = [row.city, row.platform].filter(Boolean).join(" · ");
+  return parts ? `${shortName} · ${parts}` : shortName;
+}
+
+function shortStoreName(value) {
+  if (!value) return "未命名门店";
+  const normalized = String(value).replace(/\s+/g, " ").trim();
+  const bracketMatch = normalized.match(/[（(]([^()（）]+?店)[）)]\s*$/);
+  if (bracketMatch) return bracketMatch[1];
+
+  const withoutBrand = normalized
+    .replace(/^窄巷口[·・]?\s*/, "")
+    .replace(/^(?:生烫牛肉米线(?:·?馄饨)?|生烫牛肉米线馄饨)/, "")
+    .trim();
+
+  return withoutBrand || normalized;
+}
+
+function mappingCellArgs(row, platform) {
+  if (platform === "美团") return [row.meituan_store_id, row.meituan_store_name];
+  if (platform === "饿了么") return [row.eleme_store_id, row.eleme_store_name];
+  return [row.jd_store_id, row.jd_store_name];
 }
 
 function locationSubtitle() {
-  if (state.province && state.city) return `${state.province} · ${state.city}`;
-  if (state.province) return `${state.province} 范围`;
+  if (state.province && state.city) return `${displayProvince(state.province)} · ${state.city}`;
+  if (state.province) return `${displayProvince(state.province)} 范围`;
   return "全部省份 / 城市";
 }
 
 function formatMappingCell(id, name) {
-  if (!id) return "未映射";
+  if (!isMappedStoreId(id)) return "未映射";
   return `${id}<br><span class="mini-stat">${name || "-"}</span>`;
+}
+
+function isMappedStoreId(value) {
+  return Boolean(value && value !== "未入驻平台");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function displayProvince(value) {
@@ -874,10 +983,6 @@ function displayProvince(value) {
   if (value.startsWith("宁夏")) return "宁夏";
   if (value.startsWith("西藏")) return "西藏";
   return value;
-}
-
-function storeIdentity(row) {
-  return row.standard_store_id || `${row.platform}::${row.standard_store_name || row.platform_store_name || row.city || 'unknown'}`;
 }
 
 function normalizeInputDate(value) {
@@ -892,10 +997,6 @@ function shiftDate(dateString, offsetDays) {
   const date = new Date(dateString.replaceAll("/", "-"));
   date.setDate(date.getDate() + offsetDays);
   return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
-}
-
-function sum(rows, field) {
-  return rows.reduce((total, row) => total + Number(row[field] || 0), 0);
 }
 
 function uniqueValues(values) {

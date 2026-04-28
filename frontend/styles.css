@@ -132,6 +132,16 @@ body {
   box-shadow: 0 0 0 6px rgba(67, 198, 122, 0.14);
 }
 
+.status-dot.is-loading {
+  background: linear-gradient(180deg, #d99a38, #a76324);
+  box-shadow: 0 0 0 6px rgba(217, 154, 56, 0.14);
+}
+
+.status-dot.is-error {
+  background: linear-gradient(180deg, #d56a55, #a73d28);
+  box-shadow: 0 0 0 6px rgba(213, 106, 85, 0.14);
+}
+
 .filter-bar {
   display: grid;
   grid-template-columns: 1.1fr repeat(4, minmax(140px, 1fr)) repeat(2, minmax(140px, 0.8fr));
@@ -159,7 +169,8 @@ body {
 .segment,
 .platform-chip,
 select,
-input[type="date"] {
+input[type="date"],
+input[type="search"] {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #fffdf8;
@@ -186,7 +197,8 @@ input[type="date"] {
 }
 
 select,
-input[type="date"] {
+input[type="date"],
+input[type="search"] {
   width: 100%;
   padding: 12px 14px;
 }
@@ -357,6 +369,32 @@ input[type="date"] {
   border: 1px solid rgba(97, 72, 49, 0.08);
 }
 
+.chart-hit-point {
+  cursor: pointer;
+}
+
+.chart-tooltip {
+  position: fixed;
+  z-index: 9999;
+  max-width: 240px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(47, 36, 28, 0.94);
+  color: #fff7ef;
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 14px 30px rgba(47, 36, 28, 0.22);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.chart-tooltip.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .table-wrap {
   overflow: auto;
 }
@@ -397,6 +435,22 @@ th {
 .empty-note {
   color: var(--muted);
   font-size: 14px;
+}
+
+.state-card {
+  min-height: 180px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+}
+
+.state-card .panel-note {
+  margin-bottom: 0;
+}
+
+.state-card--error {
+  border-color: rgba(167, 61, 40, 0.22);
+  background: rgba(255, 247, 242, 0.92);
 }
 
 @media (max-width: 1200px) {

@@ -12,7 +12,7 @@
         <div class="brand">
           <p class="brand-kicker">Web Kanban</p>
           <h1>窄巷口经营看板</h1>
-          <p class="brand-meta">本地静态原型 · 5 个看板骨架</p>
+          <p class="brand-meta">本地 API 联调版 · 5 个看板骨架</p>
         </div>
 
         <nav class="nav-list">
@@ -37,7 +37,7 @@
           </div>
           <div class="topbar-info">
             <span class="status-dot"></span>
-            <span>本地演示数据</span>
+            <span id="data-status">等待连接本地 API</span>
           </div>
         </header>
 
@@ -79,6 +79,11 @@
             <select id="city-filter">
               <option value="">全部城市</option>
             </select>
+          </div>
+
+          <div class="filter-group filter-mapping">
+            <label>门店搜索</label>
+            <input type="search" id="mapping-search" placeholder="搜索标准门店或平台门店名" />
           </div>
         </section>
 

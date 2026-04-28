@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -21,9 +22,9 @@ from query_service import (
 )
 
 
-BASE_DIR = Path(__file__).resolve().parents[1]
+BASE_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = BASE_DIR / "frontend"
-PORT = 4180
+PORT = int(os.environ.get("PORT", "4180"))
 
 
 def _parse_filters(query_string: str) -> QueryFilters:
@@ -51,54 +52,149 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def _handle_api(self, parsed) -> None:
         filters = _parse_filters(parsed.query)
-        payload = None
+        route = parsed.path
+        query = parse_qs(parsed.query)
 
-        if parsed.path == "/api/health":
-            payload = {"ok": True}
-        elif parsed.path == "/api/bootstrap":
-            payload = fetch_filter_options()
-        elif parsed.path == "/api/overview":
-            payload = {
-                "summary": fetch_overview_summary(filters),
-                "revenue_share": fetch_revenue_share(filters),
-                "order_compare": fetch_order_compare(filters),
-                "ticket_compare": fetch_ticket_compare(filters),
-                "core_table": fetch_core_table(filters),
-            }
-        elif parsed.path == "/api/trends":
-            payload = {
-                "summary": fetch_overview_summary(filters),
-                "revenue": fetch_trend(filters, "revenue"),
-                "orders": fetch_trend(filters, "orders"),
-                "exposure_users": fetch_trend(filters, "exposure_users"),
-                "hand_rate": fetch_trend(filters, "hand_rate"),
-                "active_stores": fetch_trend(filters, "active_stores"),
-            }
-        elif parsed.path == "/api/stores":
-            payload = {
-                "summary": fetch_overview_summary(filters),
-                "active_trend": fetch_trend(filters, "active_stores"),
-                "top_revenue": fetch_store_top20(filters, "revenue"),
-                "top_orders": fetch_store_top20(filters, "orders"),
-                "top_conversion": fetch_store_top20(filters, "order_conversion_rate"),
-            }
-        elif parsed.path == "/api/regions":
-            payload = {
-                "summary": fetch_overview_summary(filters),
-                "top_revenue": fetch_city_top20(filters, "revenue"),
-                "top_orders": fetch_city_top20(filters, "orders"),
-                "top_store_count": fetch_city_top20(filters, "store_count"),
-            }
-        elif parsed.path == "/api/store-mappings":
-            payload = {
-                "summary": fetch_store_mapping_summary(),
-                "rows": fetch_store_mapping_list(limit=200),
-            }
-        else:
+        if route in {"/api/health", "/api/v1/health"}:
+            self._json_response({"ok": True})
+            return
+
+        if route in {"/api/bootstrap", "/api/v1/bootstrap"}:
+            self._json_response(fetch_filter_options())
+            return
+
+        if route == "/api/overview":
+            self._json_response(
+                {
+                    "summary": fetch_overview_summary(filters),
+                    "revenue_share": fetch_revenue_share(filters),
+                    "order_compare": fetch_order_compare(filters),
+                    "ticket_compare": fetch_ticket_compare(filters),
+                    "core_table": fetch_core_table(filters),
+                }
+            )
+            return
+
+        if route == "/api/trends":
+            self._json_response(
+                {
+                    "summary": fetch_overview_summary(filters),
+                    "revenue": fetch_trend(filters, "revenue"),
+                    "orders": fetch_trend(filters, "orders"),
+                    "exposure_users": fetch_trend(filters, "exposure_users"),
+                    "hand_rate": fetch_trend(filters, "hand_rate"),
+                    "active_stores": fetch_trend(filters, "active_stores"),
+                }
+            )
+            return
+
+        if route == "/api/stores":
+            stores_limit = int(query.get("limit", ["20"])[0] or "20")
+            self._json_response(
+                {
+                    "summary": fetch_overview_summary(filters),
+                    "active_trend": fetch_trend(filters, "active_stores"),
+                    "top_revenue": fetch_store_top20(filters, "revenue", limit=stores_limit),
+                    "top_orders": fetch_store_top20(filters, "orders", limit=stores_limit),
+                    "top_conversion": fetch_store_top20(filters, "order_conversion_rate", limit=stores_limit),
+                }
+            )
+            return
+
+        if route == "/api/regions":
+            self._json_response(
+                {
+                    "summary": fetch_overview_summary(filters),
+                    "top_revenue": fetch_city_top20(filters, "revenue"),
+                    "top_orders": fetch_city_top20(filters, "orders"),
+                    "top_store_count": fetch_city_top20(filters, "store_count"),
+                }
+            )
+            return
+
+        if route == "/api/store-mappings":
+            self._json_response(
+                {
+                    "summary": fetch_store_mapping_summary(
+                        platforms=filters.platforms,
+                        keyword=query.get("keyword", [""])[0] or None,
+                    ),
+                    "rows": fetch_store_mapping_list(
+                        limit=int(query.get("limit", ["200"])[0] or "200"),
+                        keyword=query.get("keyword", [""])[0] or None,
+                    ),
+                }
+            )
+            return
+
+        payload = self._handle_v1_resource(route, filters, parsed.query)
+        if payload is None:
             self._json_response({"error": "Not found"}, status=404)
             return
 
         self._json_response(payload)
+
+    def _handle_v1_resource(self, route: str, filters: QueryFilters, query_string: str):
+        query = parse_qs(query_string)
+        if route == "/api/v1/overview/summary":
+            return fetch_overview_summary(filters)
+        if route == "/api/v1/overview/revenue-share":
+            return fetch_revenue_share(filters)
+        if route == "/api/v1/overview/order-compare":
+            return fetch_order_compare(filters)
+        if route == "/api/v1/overview/ticket-compare":
+            return fetch_ticket_compare(filters)
+        if route == "/api/v1/overview/core-table":
+            return fetch_core_table(filters)
+
+        if route == "/api/v1/trends/summary":
+            return fetch_overview_summary(filters)
+        if route == "/api/v1/trends/revenue":
+            return fetch_trend(filters, "revenue")
+        if route == "/api/v1/trends/orders":
+            return fetch_trend(filters, "orders")
+        if route == "/api/v1/trends/exposure":
+            return fetch_trend(filters, "exposure_users")
+        if route == "/api/v1/trends/hand-rate":
+            return fetch_trend(filters, "hand_rate")
+
+        if route == "/api/v1/stores/summary":
+            return fetch_overview_summary(filters)
+        if route == "/api/v1/stores/active-trend":
+            return fetch_trend(filters, "active_stores")
+        if route == "/api/v1/stores/top-revenue":
+            return fetch_store_top20(filters, "revenue", limit=int(query.get("limit", ["20"])[0] or "20"))
+        if route == "/api/v1/stores/top-orders":
+            return fetch_store_top20(filters, "orders", limit=int(query.get("limit", ["20"])[0] or "20"))
+        if route == "/api/v1/stores/top-conversion":
+            return fetch_store_top20(
+                filters,
+                "order_conversion_rate",
+                limit=int(query.get("limit", ["20"])[0] or "20"),
+            )
+
+        if route == "/api/v1/regions/summary":
+            return fetch_overview_summary(filters)
+        if route == "/api/v1/regions/top-revenue":
+            return fetch_city_top20(filters, "revenue")
+        if route == "/api/v1/regions/top-orders":
+            return fetch_city_top20(filters, "orders")
+        if route == "/api/v1/regions/top-store-count":
+            return fetch_city_top20(filters, "store_count")
+
+        if route == "/api/v1/store-mappings/summary":
+            return fetch_store_mapping_summary(
+                platforms=filters.platforms,
+                keyword=query.get("keyword", [""])[0] or None,
+            )
+        if route == "/api/v1/store-mappings/list":
+            limit = int(query.get("limit", ["200"])[0] or "200")
+            return fetch_store_mapping_list(
+                limit=limit,
+                keyword=query.get("keyword", [""])[0] or None,
+            )
+
+        return None
 
     def _json_response(self, payload, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

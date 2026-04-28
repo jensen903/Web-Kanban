@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 
-BASE_DIR = Path(__file__).resolve().parents[1]
-DB_PATH = BASE_DIR / "warehouse" / "web_kanban.db"
+BASE_DIR = Path(__file__).resolve().parents[2]
+DB_PATH = BASE_DIR / "data" / "warehouse" / "web_kanban.db"
 
 
 @dataclass
@@ -20,10 +20,17 @@ class QueryFilters:
     city: str | None = None
 
 
+PLATFORMS = ("美团", "饿了么", "京东")
+
+
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _is_real_mapping_id(value: Any) -> bool:
+    return bool(value and value != "未入驻平台")
 
 
 def _where_clause(filters: QueryFilters, include_location: bool = False) -> tuple[str, list[Any]]:
@@ -179,14 +186,14 @@ def fetch_trend(filters: QueryFilters, metric: str) -> list[dict[str, Any]]:
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
 
-def fetch_store_top20(filters: QueryFilters, metric: str) -> list[dict[str, Any]]:
+def fetch_store_top20(filters: QueryFilters, metric: str, limit: int = 20) -> list[dict[str, Any]]:
     metric_sql = {
         "revenue": "COALESCE(SUM(revenue), 0)",
         "orders": "COALESCE(SUM(valid_orders), 0)",
         "order_conversion_rate": "AVG(order_conversion_rate)",
     }
     if metric not in metric_sql:
-        raise ValueError(f"不支持的门店 Top20 指标: {metric}")
+        raise ValueError(f"不支持的门店 TopN 指标: {metric}")
 
     where_sql, params = _where_clause(filters, include_location=True)
     sql = f"""
@@ -201,10 +208,10 @@ def fetch_store_top20(filters: QueryFilters, metric: str) -> list[dict[str, Any]
         {where_sql}
         GROUP BY standard_store_id, standard_store_name, province, city, platform
         ORDER BY metric_value DESC
-        LIMIT 20
+        LIMIT ?
     """
     with _connect() as conn:
-        return [dict(row) for row in conn.execute(sql, params).fetchall()]
+        return [dict(row) for row in conn.execute(sql, [*params, limit]).fetchall()]
 
 
 def fetch_city_top20(filters: QueryFilters, metric: str) -> list[dict[str, Any]]:
@@ -233,24 +240,10 @@ def fetch_city_top20(filters: QueryFilters, metric: str) -> list[dict[str, Any]]
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
 
-def fetch_store_mapping_summary() -> dict[str, Any]:
+def fetch_store_mapping_list(limit: int | None = 200, keyword: str | None = None) -> list[dict[str, Any]]:
     sql = """
         SELECT
-            COUNT(DISTINCT standard_store_id) AS standard_store_count,
-            COUNT(DISTINCT CASE WHEN platform = '美团' THEN standard_store_id END) AS meituan_mapped_count,
-            COUNT(DISTINCT CASE WHEN platform = '饿了么' THEN standard_store_id END) AS eleme_mapped_count,
-            COUNT(DISTINCT CASE WHEN platform = '京东' THEN standard_store_id END) AS jd_mapped_count
-        FROM bridge_platform_store_mapping
-    """
-    with _connect() as conn:
-        row = conn.execute(sql).fetchone()
-    return dict(row)
-
-
-def fetch_store_mapping_list(limit: int = 200) -> list[dict[str, Any]]:
-    sql = """
-        SELECT
-            m.standard_store_id,
+            s.standard_store_id,
             s.standard_store_name,
             s.province,
             s.city,
@@ -262,15 +255,82 @@ def fetch_store_mapping_list(limit: int = 200) -> list[dict[str, Any]]:
             MAX(CASE WHEN m.platform = '饿了么' THEN m.platform_store_name END) AS eleme_store_name,
             MAX(CASE WHEN m.platform = '京东' THEN m.platform_store_id END) AS jd_store_id,
             MAX(CASE WHEN m.platform = '京东' THEN m.platform_store_name END) AS jd_store_name
-        FROM bridge_platform_store_mapping m
-        LEFT JOIN dim_standard_store s
+        FROM dim_standard_store s
+        LEFT JOIN bridge_platform_store_mapping m
           ON s.standard_store_id = m.standard_store_id
-        GROUP BY m.standard_store_id, s.standard_store_name, s.province, s.city, s.district, s.operator_name
+        GROUP BY s.standard_store_id, s.standard_store_name, s.province, s.city, s.district, s.operator_name
         ORDER BY s.standard_store_name
-        LIMIT ?
     """
     with _connect() as conn:
-        return [dict(row) for row in conn.execute(sql, (limit,)).fetchall()]
+        rows = [dict(row) for row in conn.execute(sql).fetchall()]
+
+    if keyword:
+        needle = keyword.strip().lower()
+        rows = [
+            row
+            for row in rows
+            if needle
+            in " ".join(
+                str(row.get(field) or "")
+                for field in (
+                    "standard_store_name",
+                    "meituan_store_name",
+                    "eleme_store_name",
+                    "jd_store_name",
+                )
+            ).lower()
+        ]
+
+    if limit is not None:
+        rows = rows[:limit]
+
+    return rows
+
+
+def fetch_store_mapping_summary(
+    platforms: tuple[str, ...] = PLATFORMS,
+    keyword: str | None = None,
+) -> dict[str, Any]:
+    rows = fetch_store_mapping_list(limit=None, keyword=keyword)
+    selected_platforms = tuple(platform for platform in platforms if platform in PLATFORMS) or PLATFORMS
+
+    selected_mapped_count = 0
+    meituan_mapped_count = 0
+    eleme_mapped_count = 0
+    jd_mapped_count = 0
+
+    for row in rows:
+        meituan_mapped = _is_real_mapping_id(row.get("meituan_store_id"))
+        eleme_mapped = _is_real_mapping_id(row.get("eleme_store_id"))
+        jd_mapped = _is_real_mapping_id(row.get("jd_store_id"))
+
+        if meituan_mapped:
+            meituan_mapped_count += 1
+        if eleme_mapped:
+            eleme_mapped_count += 1
+        if jd_mapped:
+            jd_mapped_count += 1
+
+        selected_flags = {
+            "美团": meituan_mapped,
+            "饿了么": eleme_mapped,
+            "京东": jd_mapped,
+        }
+        if any(selected_flags[platform] for platform in selected_platforms):
+            selected_mapped_count += 1
+
+    standard_store_count = len(rows)
+    selected_unmapped_count = standard_store_count - selected_mapped_count
+
+    return {
+        "standard_store_count": standard_store_count,
+        "selected_platforms": list(selected_platforms),
+        "selected_mapped_count": selected_mapped_count,
+        "selected_unmapped_count": selected_unmapped_count,
+        "meituan_mapped_count": meituan_mapped_count,
+        "eleme_mapped_count": eleme_mapped_count,
+        "jd_mapped_count": jd_mapped_count,
+    }
 
 
 def fetch_filter_options() -> dict[str, Any]:
@@ -286,6 +346,17 @@ def fetch_filter_options() -> dict[str, Any]:
                 """
             ).fetchall()
         ]
+        location_rows = conn.execute(
+            """
+            SELECT DISTINCT province, city
+            FROM dwd_platform_daily_normalized
+            WHERE province IS NOT NULL
+              AND province != ''
+              AND city IS NOT NULL
+              AND city != ''
+            ORDER BY province, city
+            """
+        ).fetchall()
         cities = [
             row["city"]
             for row in conn.execute(
@@ -305,10 +376,24 @@ def fetch_filter_options() -> dict[str, Any]:
                 """
             ).fetchone()
         )
+
+    location_map: dict[str, list[str]] = {}
+    for row in location_rows:
+        province = row["province"]
+        city = row["city"]
+        location_map.setdefault(province, []).append(city)
+
     return {
         "platforms": ["美团", "饿了么", "京东"],
         "provinces": provinces,
         "cities": cities,
+        "locations": [
+            {
+                "province": province,
+                "cities": sorted(set(province_cities)),
+            }
+            for province, province_cities in location_map.items()
+        ],
         **meta,
     }
 
