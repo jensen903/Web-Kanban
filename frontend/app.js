@@ -755,8 +755,8 @@ function renderLineChart(seriesByPlatform, format, metricLabel = "指标值") {
   const padding = 32;
   const leftPadding = 78;
   const rightPadding = 24;
-  const minValue = Math.min(...allPoints.map((point) => point.value), 0);
-  const maxValue = Math.max(...allPoints.map((point) => point.value), 1);
+  const axis = computeChartAxis(allPoints.map((point) => point.value), format);
+  const { minValue, maxValue, ticks } = axis;
   const dates = uniqueValues(allPoints.map((point) => point.date)).sort();
 
   const xForIndex = (index) => {
@@ -768,16 +768,14 @@ function renderLineChart(seriesByPlatform, format, metricLabel = "指标值") {
     return height - padding - ((value - minValue) / (maxValue - minValue)) * (height - padding * 2);
   };
 
-  const yAxisSteps = [0, 0.25, 0.5, 0.75, 1];
-  const gridLines = yAxisSteps.map((step) => {
-    const y = padding + step * (height - padding * 2);
+  const gridLines = ticks.map((tick) => {
+    const y = yForValue(tick);
     return `<line x1="${leftPadding}" y1="${y}" x2="${width - rightPadding}" y2="${y}" stroke="rgba(97,72,49,0.08)" stroke-dasharray="4 6"></line>`;
   });
-  const yAxisLabels = yAxisSteps
-    .map((step) => {
-      const value = maxValue - step * (maxValue - minValue);
-      const y = padding + step * (height - padding * 2);
-      return `<text x="${leftPadding - 10}" y="${y + 4}" text-anchor="end" font-size="11" fill="#756455">${formatAxisTickValue(value, format)}</text>`;
+  const yAxisLabels = ticks
+    .map((tick) => {
+      const y = yForValue(tick);
+      return `<text x="${leftPadding - 10}" y="${y + 4}" text-anchor="end" font-size="11" fill="#756455">${formatAxisTickValue(tick, format)}</text>`;
     })
     .join("");
 
@@ -1109,6 +1107,80 @@ function formatAxisTickValue(value, format) {
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(Number(value || 0));
+}
+
+function computeChartAxis(values, format) {
+  const tickCount = 5;
+  const safeValues = values.filter((value) => Number.isFinite(Number(value))).map((value) => Number(value));
+  if (!safeValues.length) {
+    return { minValue: 0, maxValue: 1, ticks: [0, 0.25, 0.5, 0.75, 1] };
+  }
+
+  if (format === "percent") {
+    return computePercentAxis(safeValues, tickCount);
+  }
+  return computeMagnitudeAxis(safeValues, tickCount);
+}
+
+function computePercentAxis(values, tickCount) {
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const paddedMin = Math.max(0, rawMin - 0.01);
+  const paddedMax = Math.min(1, rawMax + 0.01);
+  const minSpan = 0.05;
+  const centeredMin = Math.max(0, Math.min(paddedMin, paddedMax - minSpan));
+  const centeredMax = Math.min(1, Math.max(paddedMax, centeredMin + minSpan));
+  const roughStep = (centeredMax - centeredMin) / (tickCount - 1);
+  const step = choosePercentStep(roughStep);
+  const minValue = Math.max(0, Math.floor(centeredMin / step) * step);
+  const maxValue = Math.min(1, Math.ceil(centeredMax / step) * step);
+  return {
+    minValue,
+    maxValue,
+    ticks: buildTicks(minValue, maxValue, step),
+  };
+}
+
+function computeMagnitudeAxis(values, tickCount) {
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const span = rawMax - rawMin;
+  const paddedMin = Math.max(0, rawMin - span * 0.08);
+  const paddedMax = rawMax + Math.max(span * 0.12, rawMax * 0.03, 1);
+  const roughStep = Math.max((paddedMax - paddedMin) / (tickCount - 1), 1);
+  const step = chooseNiceNumber(roughStep);
+  const minValue = Math.max(0, Math.floor(paddedMin / step) * step);
+  const maxValue = Math.max(step, Math.ceil(paddedMax / step) * step);
+  return {
+    minValue,
+    maxValue,
+    ticks: buildTicks(minValue, maxValue, step),
+  };
+}
+
+function choosePercentStep(roughStep) {
+  const percentSteps = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2];
+  return percentSteps.find((step) => roughStep <= step) || 0.2;
+}
+
+function chooseNiceNumber(value) {
+  if (value <= 0) return 1;
+  const exponent = Math.floor(Math.log10(value));
+  const fraction = value / 10 ** exponent;
+  let niceFraction = 10;
+  if (fraction <= 1) niceFraction = 1;
+  else if (fraction <= 2) niceFraction = 2;
+  else if (fraction <= 5) niceFraction = 5;
+  return niceFraction * 10 ** exponent;
+}
+
+function buildTicks(minValue, maxValue, step) {
+  const ticks = [];
+  const safeStep = step || 1;
+  for (let value = minValue; value <= maxValue + safeStep / 2; value += safeStep) {
+    ticks.push(Number(value.toFixed(6)));
+  }
+  return ticks;
 }
 
 function hexToSoft(hex) {
