@@ -4,6 +4,7 @@ import json
 import sqlite3
 import statistics
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -95,10 +96,38 @@ def _where_clause(filters: QueryFilters, include_location: bool = False) -> tupl
     return " WHERE " + " AND ".join(clauses), params
 
 
+def _parse_date(value: str) -> date:
+    return datetime.strptime(value, "%Y/%m/%d").date()
+
+
+def _format_date(value: date) -> str:
+    return value.strftime("%Y/%m/%d")
+
+
+def _previous_period_filters(filters: QueryFilters) -> QueryFilters:
+    start_date = _parse_date(filters.start_date)
+    end_date = _parse_date(filters.end_date)
+    period_days = (end_date - start_date).days + 1
+    previous_end = start_date - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=period_days - 1)
+    return QueryFilters(
+        start_date=_format_date(previous_start),
+        end_date=_format_date(previous_end),
+        platforms=filters.platforms,
+        province=filters.province,
+        city=filters.city,
+    )
+
+
+def _compute_change_rate(current_value: float, previous_value: float) -> float | None:
+    if previous_value == 0:
+        return 0.0 if current_value == 0 else None
+    return (current_value - previous_value) / previous_value
+
+
 def fetch_overview_summary(filters: QueryFilters) -> dict[str, Any]:
-    where_sql, params = _where_clause(filters, include_location=True)
     province_sql = _resolved_province_sql()
-    sql = f"""
+    sql_template = f"""
         SELECT
             COALESCE(SUM(revenue), 0) AS total_revenue,
             COALESCE(SUM(valid_orders), 0) AS total_orders,
@@ -110,11 +139,30 @@ def fetch_overview_summary(filters: QueryFilters) -> dict[str, Any]:
             COUNT(DISTINCT {province_sql}) AS covered_provinces,
             COUNT(DISTINCT city) AS covered_cities
         FROM dwd_platform_daily_normalized
-        {where_sql}
+        {{where_sql}}
     """
+    where_sql, params = _where_clause(filters, include_location=True)
+    sql = sql_template.format(where_sql=where_sql)
     with _connect() as conn:
-        row = conn.execute(sql, params).fetchone()
-    return dict(row)
+        current_row = dict(conn.execute(sql, params).fetchone())
+        previous_filters = _previous_period_filters(filters)
+        previous_where_sql, previous_params = _where_clause(previous_filters, include_location=True)
+        previous_sql = sql_template.format(where_sql=previous_where_sql)
+        previous_row = dict(conn.execute(previous_sql, previous_params).fetchone())
+
+    current_row["previous_total_revenue"] = previous_row["total_revenue"]
+    current_row["previous_total_orders"] = previous_row["total_orders"]
+    current_row["revenue_change_rate"] = _compute_change_rate(
+        float(current_row["total_revenue"] or 0),
+        float(previous_row["total_revenue"] or 0),
+    )
+    current_row["orders_change_rate"] = _compute_change_rate(
+        float(current_row["total_orders"] or 0),
+        float(previous_row["total_orders"] or 0),
+    )
+    current_row["previous_start_date"] = previous_filters.start_date
+    current_row["previous_end_date"] = previous_filters.end_date
+    return current_row
 
 
 def fetch_revenue_share(filters: QueryFilters) -> list[dict[str, Any]]:
@@ -417,7 +465,17 @@ def _filter_mapping_rows(
     keyword: str | None = None,
     mapping_filter: str | None = None,
     platforms: tuple[str, ...] = PLATFORMS,
+    province: str | None = None,
+    city: str | None = None,
+    district: str | None = None,
 ) -> list[dict[str, Any]]:
+    if province:
+        rows = [row for row in rows if (row.get("province") or "") == province]
+    if city:
+        rows = [row for row in rows if (row.get("city") or "") == city]
+    if district:
+        rows = [row for row in rows if (row.get("district") or "") == district]
+
     if keyword:
         needle = keyword.strip().lower()
         rows = [
@@ -460,6 +518,17 @@ def _filter_mapping_rows(
             for row in rows
             if any(not _is_real_mapping_id(row.get(field_map[platform])) for platform in selected_platforms)
         ]
+    elif mapping_filter == "selected-platform-fully-mapped":
+        field_map = {
+            "美团": "meituan_store_id",
+            "饿了么": "eleme_store_id",
+            "京东": "jd_store_id",
+        }
+        rows = [
+            row
+            for row in rows
+            if all(_is_real_mapping_id(row.get(field_map[platform])) for platform in selected_platforms)
+        ]
 
     return rows
 
@@ -469,6 +538,9 @@ def fetch_store_mapping_list(
     keyword: str | None = None,
     mapping_filter: str | None = None,
     platforms: tuple[str, ...] = PLATFORMS,
+    province: str | None = None,
+    city: str | None = None,
+    district: str | None = None,
 ) -> list[dict[str, Any]]:
     sql = """
         SELECT
@@ -492,7 +564,15 @@ def fetch_store_mapping_list(
     with _connect() as conn:
         rows = [dict(row) for row in conn.execute(sql).fetchall()]
 
-    rows = _filter_mapping_rows(rows, keyword=keyword, mapping_filter=mapping_filter, platforms=platforms)
+    rows = _filter_mapping_rows(
+        rows,
+        keyword=keyword,
+        mapping_filter=mapping_filter,
+        platforms=platforms,
+        province=province,
+        city=city,
+        district=district,
+    )
     if limit is not None:
         rows = rows[:limit]
 
@@ -503,8 +583,19 @@ def fetch_store_mapping_summary(
     platforms: tuple[str, ...] = PLATFORMS,
     keyword: str | None = None,
     mapping_filter: str | None = None,
+    province: str | None = None,
+    city: str | None = None,
+    district: str | None = None,
 ) -> dict[str, Any]:
-    rows = fetch_store_mapping_list(limit=None, keyword=keyword, mapping_filter=mapping_filter, platforms=platforms)
+    rows = fetch_store_mapping_list(
+        limit=None,
+        keyword=keyword,
+        mapping_filter=mapping_filter,
+        platforms=platforms,
+        province=province,
+        city=city,
+        district=district,
+    )
     selected_platforms = tuple(platform for platform in platforms if platform in PLATFORMS) or PLATFORMS
 
     selected_mapped_count = 0
@@ -590,12 +681,33 @@ def fetch_filter_options() -> dict[str, Any]:
                 """
             ).fetchone()
         )
+        mapping_location_rows = conn.execute(
+            """
+            SELECT DISTINCT province, city, district
+            FROM dim_standard_store
+            WHERE COALESCE(NULLIF(province, ''), NULLIF(city, ''), NULLIF(district, '')) IS NOT NULL
+            ORDER BY province, city, district
+            """
+        ).fetchall()
 
     location_map: dict[str, list[str]] = {}
     for row in location_rows:
         province = row["province"]
         city = row["city"]
         location_map.setdefault(province, []).append(city)
+
+    mapping_location_map: dict[str, dict[str, set[str]]] = {}
+    for row in mapping_location_rows:
+        province = (row["province"] or "").strip()
+        city = (row["city"] or "").strip()
+        district = (row["district"] or "").strip()
+        if not province:
+            continue
+        city_map = mapping_location_map.setdefault(province, {})
+        if city:
+            city_map.setdefault(city, set())
+            if district:
+                city_map[city].add(district)
 
     return {
         "platforms": ["美团", "饿了么", "京东"],
@@ -607,6 +719,19 @@ def fetch_filter_options() -> dict[str, Any]:
                 "cities": sorted(set(province_cities)),
             }
             for province, province_cities in location_map.items()
+        ],
+        "mapping_locations": [
+            {
+                "province": province,
+                "cities": [
+                    {
+                        "city": city,
+                        "districts": sorted(districts),
+                    }
+                    for city, districts in sorted(city_map.items())
+                ],
+            }
+            for province, city_map in sorted(mapping_location_map.items())
         ],
         **meta,
     }

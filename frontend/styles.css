@@ -144,7 +144,7 @@ body {
 
 .filter-bar {
   display: grid;
-  grid-template-columns: minmax(220px, 1.1fr) repeat(7, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 14px;
   padding: 18px;
   background: var(--surface);
@@ -181,6 +181,7 @@ input[type="search"] {
 .filter-group--segmented {
   display: flex;
   align-items: end;
+  grid-column: span 2;
 }
 
 .filter-group--segmented .segment {
@@ -273,6 +274,24 @@ input[type="search"] {
   margin-top: 10px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.metric-compare {
+  display: block;
+  margin-top: 6px;
+  font-weight: 600;
+}
+
+.metric-compare.is-up {
+  color: #b85d31;
+}
+
+.metric-compare.is-down {
+  color: #8b3f30;
+}
+
+.metric-compare.is-neutral {
+  color: var(--muted);
 }
 
 .panel-card h3 {

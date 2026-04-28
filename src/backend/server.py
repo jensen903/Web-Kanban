@@ -57,6 +57,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         filters = _parse_filters(parsed.query)
         route = parsed.path
         query = parse_qs(parsed.query)
+        mapping_province = query.get("mapping_province", [""])[0] or None
+        mapping_city = query.get("mapping_city", [""])[0] or None
+        mapping_district = query.get("mapping_district", [""])[0] or None
 
         if route in {"/api/health", "/api/v1/health"}:
             self._json_response({"ok": True})
@@ -128,12 +131,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         platforms=filters.platforms,
                         keyword=query.get("keyword", [""])[0] or None,
                         mapping_filter=query.get("mapping_filter", ["all"])[0] or "all",
+                        province=mapping_province,
+                        city=mapping_city,
+                        district=mapping_district,
                     ),
                     "rows": fetch_store_mapping_list(
                         limit=int(query.get("limit", ["200"])[0] or "200"),
                         keyword=query.get("keyword", [""])[0] or None,
                         mapping_filter=query.get("mapping_filter", ["all"])[0] or "all",
                         platforms=filters.platforms,
+                        province=mapping_province,
+                        city=mapping_city,
+                        district=mapping_district,
                     ),
                 }
             )
@@ -148,6 +157,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def _handle_v1_resource(self, route: str, filters: QueryFilters, query_string: str):
         query = parse_qs(query_string)
+        mapping_province = query.get("mapping_province", [""])[0] or None
+        mapping_city = query.get("mapping_city", [""])[0] or None
+        mapping_district = query.get("mapping_district", [""])[0] or None
         if route == "/api/v1/overview/summary":
             return fetch_overview_summary(filters)
         if route == "/api/v1/overview/revenue-share":
@@ -211,6 +223,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 platforms=filters.platforms,
                 keyword=query.get("keyword", [""])[0] or None,
                 mapping_filter=query.get("mapping_filter", ["all"])[0] or "all",
+                province=mapping_province,
+                city=mapping_city,
+                district=mapping_district,
             )
         if route == "/api/v1/store-mappings/list":
             limit = int(query.get("limit", ["200"])[0] or "200")
@@ -219,6 +234,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 keyword=query.get("keyword", [""])[0] or None,
                 mapping_filter=query.get("mapping_filter", ["all"])[0] or "all",
                 platforms=filters.platforms,
+                province=mapping_province,
+                city=mapping_city,
+                district=mapping_district,
             )
 
         return None

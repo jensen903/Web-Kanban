@@ -11,6 +11,9 @@ const state = {
   city: "",
   mappingKeyword: "",
   mappingFilter: "all",
+  mappingProvince: "",
+  mappingCity: "",
+  mappingDistrict: "",
   requestToken: 0,
 };
 
@@ -67,6 +70,7 @@ async function init() {
     state.bootstrap = await apiGet("/bootstrap");
     initializeDates();
     populateLocationOptions();
+    populateMappingLocationOptions();
     toggleScopedFilters();
     await loadAndRenderCurrentView();
   } catch (error) {
@@ -154,6 +158,26 @@ function bindEvents() {
     state.mappingFilter = event.target.value;
     await loadAndRenderCurrentView();
   });
+
+  document.getElementById("mapping-province-filter").addEventListener("change", async (event) => {
+    state.mappingProvince = event.target.value;
+    state.mappingCity = "";
+    state.mappingDistrict = "";
+    populateMappingLocationOptions();
+    await loadAndRenderCurrentView();
+  });
+
+  document.getElementById("mapping-city-filter").addEventListener("change", async (event) => {
+    state.mappingCity = event.target.value;
+    state.mappingDistrict = "";
+    populateMappingLocationOptions();
+    await loadAndRenderCurrentView();
+  });
+
+  document.getElementById("mapping-district-filter").addEventListener("change", async (event) => {
+    state.mappingDistrict = event.target.value;
+    await loadAndRenderCurrentView();
+  });
 }
 
 function initializeDates() {
@@ -182,6 +206,52 @@ function populateLocationOptions() {
   citySelect.innerHTML = `<option value="">全部城市</option>${cities
     .map((city) => `<option value="${city}" ${city === state.city ? "selected" : ""}>${city}</option>`)
     .join("")}`;
+}
+
+function populateMappingLocationOptions() {
+  const provinceSelect = document.getElementById("mapping-province-filter");
+  const citySelect = document.getElementById("mapping-city-filter");
+  const districtSelect = document.getElementById("mapping-district-filter");
+  const locations = state.bootstrap?.mapping_locations || [];
+
+  provinceSelect.innerHTML = `<option value="">全部省份</option>${locations
+    .map(
+      (item) =>
+        `<option value="${item.province}" ${item.province === state.mappingProvince ? "selected" : ""}>${displayProvince(item.province)}</option>`,
+    )
+    .join("")}`;
+
+  const selectedProvince = locations.find((item) => item.province === state.mappingProvince);
+  const cities = selectedProvince
+    ? selectedProvince.cities
+    : uniqueValues(locations.flatMap((item) => item.cities.map((cityItem) => cityItem.city)))
+        .sort()
+        .map((city) => ({ city, districts: collectDistrictsForCity(locations, city) }));
+  citySelect.innerHTML = `<option value="">全部城市</option>${cities
+    .map(
+      (item) =>
+        `<option value="${item.city}" ${item.city === state.mappingCity ? "selected" : ""}>${item.city}</option>`,
+    )
+    .join("")}`;
+
+  const selectedCity = cities.find((item) => item.city === state.mappingCity);
+  const districts = selectedCity ? selectedCity.districts : [];
+  districtSelect.innerHTML = `<option value="">全部地区</option>${districts
+    .map(
+      (district) =>
+        `<option value="${district}" ${district === state.mappingDistrict ? "selected" : ""}>${district}</option>`,
+    )
+    .join("")}`;
+}
+
+function collectDistrictsForCity(locations, city) {
+  return uniqueValues(
+    locations.flatMap((item) =>
+      item.cities
+        .filter((cityItem) => cityItem.city === city)
+        .flatMap((cityItem) => cityItem.districts || []),
+    ),
+  ).sort();
 }
 
 function toggleScopedFilters() {
@@ -337,12 +407,18 @@ async function loadMappingsData() {
       platform: currentSelectedPlatforms(),
       keyword: state.mappingKeyword,
       mapping_filter: state.mappingFilter,
+      mapping_province: state.mappingProvince,
+      mapping_city: state.mappingCity,
+      mapping_district: state.mappingDistrict,
     }),
     apiGet("/store-mappings/list", {
       limit: 200,
       keyword: state.mappingKeyword,
       mapping_filter: state.mappingFilter,
       platform: currentSelectedPlatforms(),
+      mapping_province: state.mappingProvince,
+      mapping_city: state.mappingCity,
+      mapping_district: state.mappingDistrict,
     }),
   ]);
 
@@ -395,9 +471,13 @@ function renderOverview(data) {
         {
           label: "总营收",
           value: formatWanInteger(data.summary.total_revenue),
-          sub: `统计周期 ${state.startDate} - ${state.endDate}`,
+          sub: `统计周期 ${state.startDate} - ${state.endDate}<span class="metric-compare ${compareClassName(data.summary.revenue_change_rate)}">${formatCompareText(data.summary.revenue_change_rate)}</span>`,
         },
-        { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: "三平台有效订单合计" },
+        {
+          label: "总订单量",
+          value: formatInteger(data.summary.total_orders),
+          sub: `三平台有效订单合计<span class="metric-compare ${compareClassName(data.summary.orders_change_rate)}">${formatCompareText(data.summary.orders_change_rate)}</span>`,
+        },
         { label: "活跃门店", value: formatInteger(data.summary.active_stores), sub: "有效订单大于 0 的门店数" },
         {
           label: "覆盖省份",
@@ -621,7 +701,7 @@ function renderRegions(data) {
 
 function renderMappings(data) {
   const platforms = currentSelectedPlatforms();
-  const headers = ["标准门店 / ID", "省份", "城市", ...platforms];
+  const headers = ["标准门店 / ID", "省份", "城市", "地区", ...platforms];
   const coverage = data.summary.standard_store_count
     ? data.summary.selected_mapped_count / data.summary.standard_store_count
     : 0;
@@ -647,7 +727,7 @@ function renderMappings(data) {
         <div class="panel-header">
           <div>
             <h3>门店映射关系表</h3>
-            <p class="panel-note">支持按名称或门店 ID 搜索，也支持筛选完全未映射或当前平台仍缺映射的门店。</p>
+            <p class="panel-note">支持按名称或门店 ID 搜索，也支持按省市区和映射状态筛选当前需要跟进的门店。</p>
           </div>
           <div class="mapping-meta">
             <span class="pill">美团 ${formatInteger(data.summary.meituan_mapped_count)}</span>
@@ -662,6 +742,7 @@ function renderMappings(data) {
               formatStandardStoreCell(row.standard_store_name, row.standard_store_id),
               row.province || "-",
               row.city || "-",
+              row.district || "-",
               ...platforms.map((platform) => formatMappingCell(...mappingCellArgs(row, platform))),
             ]),
           )}
@@ -688,6 +769,29 @@ function renderMetricCards(items) {
         .join("")}
     </div>
   `;
+}
+
+function formatCompareText(rate) {
+  const compareLabel = compareWindowLabel();
+  if (rate === null || rate === undefined) {
+    return `${compareLabel}暂无基准`;
+  }
+  const numericRate = Number(rate || 0);
+  const prefix = numericRate > 0 ? "+" : "";
+  return `${compareLabel} ${prefix}${formatPercent(numericRate, 1)}`;
+}
+
+function compareClassName(rate) {
+  if (rate === null || rate === undefined) return "is-neutral";
+  if (Number(rate) > 0) return "is-up";
+  if (Number(rate) < 0) return "is-down";
+  return "is-neutral";
+}
+
+function compareWindowLabel() {
+  if (state.rangeMode === "7") return "近7天，较前7天";
+  if (state.rangeMode === "31") return "近31天，较前31天";
+  return "自定义周期，较上一等长周期";
 }
 
 function renderDonutChart(items) {
@@ -1090,8 +1194,8 @@ function formatInteger(value) {
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(Number(value || 0));
 }
 
-function formatPercent(value) {
-  return `${(Number(value || 0) * 100).toFixed(1)}%`;
+function formatPercent(value, digits = 1) {
+  return `${(Number(value || 0) * 100).toFixed(digits)}%`;
 }
 
 function formatWanInteger(value) {
