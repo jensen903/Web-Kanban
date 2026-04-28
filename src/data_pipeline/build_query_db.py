@@ -7,9 +7,9 @@ from pathlib import Path
 import pandas as pd
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-EXPORT_DIR = REPO_ROOT / "data" / "exports"
-WAREHOUSE_DIR = REPO_ROOT / "data" / "warehouse"
+BASE_DIR = Path(__file__).resolve().parents[1]
+EXPORT_DIR = BASE_DIR / "exports"
+WAREHOUSE_DIR = BASE_DIR / "warehouse"
 DB_PATH = WAREHOUSE_DIR / "web_kanban.db"
 STORE_MASTER_PATH = Path(
     "/Users/apple/窄巷口/可视化看板/Master_门店主表/门店对齐表_最新版.xlsx"

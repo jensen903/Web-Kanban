@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 
 
-BASE_DIR = Path("/Users/apple/窄巷口/网页看板")
+BASE_DIR = Path(__file__).resolve().parents[1]
 DB_PATH = BASE_DIR / "warehouse" / "web_kanban.db"
 OUTPUT_PATH = BASE_DIR / "frontend" / "data" / "dashboard_dataset.json"
 

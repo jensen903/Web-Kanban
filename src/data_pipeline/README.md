@@ -14,7 +14,6 @@
 
 - `build_local_warehouse.py`
 - `build_query_db.py`
-- `export_frontend_dataset.py`
 
 输出结果：
 
@@ -23,7 +22,6 @@
 - `data/exports/dws_platform_daily_summary.csv`
 - `data/exports/dws_store_daily_summary.csv`
 - `data/exports/dws_city_daily_summary.csv`
-- `frontend/data/dashboard_dataset.json`
 
 注意：
 

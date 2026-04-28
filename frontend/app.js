@@ -116,7 +116,10 @@ function populateLocationOptions() {
 
   const provinces = uniqueValues(rows.map((row) => row.province)).sort((a, b) => a.localeCompare(b, "zh-CN"));
   provinceSelect.innerHTML = `<option value="">全部省份</option>${provinces
-    .map((province) => `<option value="${province}" ${province === state.province ? "selected" : ""}>${province}</option>`)
+    .map(
+      (province) =>
+        `<option value="${province}" ${province === state.province ? "selected" : ""}>${displayProvince(province)}</option>`,
+    )
     .join("")}`;
 
   const cities = uniqueValues(
@@ -650,7 +653,10 @@ function aggregateOverview(rows) {
 
   const rawStoreRows = filteredStoreRows();
   const activeStoreIds = new Set(
-    rawStoreRows.filter((row) => Number(row.valid_orders || 0) > 0).map((row) => row.standard_store_id),
+    rawStoreRows
+      .filter((row) => Number(row.valid_orders || 0) > 0)
+      .map((row) => storeIdentity(row))
+      .filter(Boolean),
   );
   const provinces = uniqueValues(rawStoreRows.map((row) => row.province));
   const cities = uniqueValues(rawStoreRows.map((row) => row.city));
@@ -658,7 +664,7 @@ function aggregateOverview(rows) {
   return {
     totalRevenue,
     totalOrders,
-    activeStores: activeStoreIds.length,
+    activeStores: activeStoreIds.size,
     coveredProvinces: provinces.length,
     coveredCities: cities.length,
   };
@@ -668,7 +674,12 @@ function aggregateStoreOverview(rows) {
   return {
     totalRevenue: sum(rows, "revenue"),
     totalOrders: sum(rows, "valid_orders"),
-    activeStores: uniqueValues(rows.filter((row) => Number(row.valid_orders || 0) > 0).map((row) => row.standard_store_id)).length,
+    activeStores: uniqueValues(
+      rows
+        .filter((row) => Number(row.valid_orders || 0) > 0)
+        .map((row) => storeIdentity(row))
+        .filter(Boolean),
+    ).length,
   };
 }
 
@@ -811,9 +822,31 @@ function aggregateTopStores(rows, field, useAverage = false) {
 }
 
 function aggregateTopCities(rows, field) {
+  if (field === "store_count") {
+    const storeRows = filteredStoreRows();
+    const groupedStores = new Map();
+    storeRows.forEach((row) => {
+      const identity = storeIdentity(row);
+      if (!identity) return;
+      const label = `${displayProvince(row.province || "-")} / ${row.city || "-"}`;
+      const key = `${label}__${row.platform}`;
+      if (!groupedStores.has(key)) {
+        groupedStores.set(key, new Set());
+      }
+      groupedStores.get(key).add(identity);
+    });
+    return [...groupedStores.entries()]
+      .map(([key, set]) => {
+        const [label, platform] = key.split("__");
+        return { label, platform, value: set.size };
+      })
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 20);
+  }
+
   const grouped = new Map();
   rows.forEach((row) => {
-    const label = `${row.province || "-"} / ${row.city || "-"}`;
+    const label = `${displayProvince(row.province || "-")} / ${row.city || "-"}`;
     const key = `${label}__${row.platform}`;
     const current = grouped.get(key) || { label, platform: row.platform, value: 0 };
     current.value += Number(row[field] || 0);
@@ -831,6 +864,20 @@ function locationSubtitle() {
 function formatMappingCell(id, name) {
   if (!id) return "未映射";
   return `${id}<br><span class="mini-stat">${name || "-"}</span>`;
+}
+
+function displayProvince(value) {
+  if (!value) return "-";
+  if (value.startsWith("广西")) return "广西";
+  if (value.startsWith("新疆")) return "新疆";
+  if (value.startsWith("内蒙古")) return "内蒙古";
+  if (value.startsWith("宁夏")) return "宁夏";
+  if (value.startsWith("西藏")) return "西藏";
+  return value;
+}
+
+function storeIdentity(row) {
+  return row.standard_store_id || `${row.platform}::${row.standard_store_name || row.platform_store_name || row.city || 'unknown'}`;
 }
 
 function normalizeInputDate(value) {

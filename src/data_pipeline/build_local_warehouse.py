@@ -9,14 +9,14 @@ from typing import Iterable
 import pandas as pd
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[1]
 RAW_DIR = Path("/Users/apple/窄巷口/可视化看板/Inputs/经营数据")
 STORE_MASTER_PATH = Path(
     "/Users/apple/窄巷口/可视化看板/Master_门店主表/门店对齐表_最新版.xlsx"
 )
 
-WAREHOUSE_DIR = REPO_ROOT / "data" / "warehouse"
-EXPORT_DIR = REPO_ROOT / "data" / "exports"
+WAREHOUSE_DIR = BASE_DIR / "warehouse"
+EXPORT_DIR = BASE_DIR / "exports"
 DB_PATH = WAREHOUSE_DIR / "web_kanban.db"
 
 

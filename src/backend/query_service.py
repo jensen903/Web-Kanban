@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DB_PATH = REPO_ROOT / "data" / "warehouse" / "web_kanban.db"
+BASE_DIR = Path(__file__).resolve().parents[1]
+DB_PATH = BASE_DIR / "warehouse" / "web_kanban.db"
 
 
 @dataclass
@@ -52,7 +52,11 @@ def fetch_overview_summary(filters: QueryFilters) -> dict[str, Any]:
         SELECT
             COALESCE(SUM(revenue), 0) AS total_revenue,
             COALESCE(SUM(valid_orders), 0) AS total_orders,
-            COUNT(DISTINCT CASE WHEN active_store_flag = 1 THEN standard_store_id END) AS active_stores,
+            COUNT(
+                DISTINCT CASE
+                    WHEN active_store_flag = 1 THEN COALESCE(standard_store_id, platform || ':' || platform_store_id)
+                END
+            ) AS active_stores,
             COUNT(DISTINCT province) AS covered_provinces,
             COUNT(DISTINCT city) AS covered_cities
         FROM dwd_platform_daily_normalized
@@ -118,13 +122,44 @@ def fetch_ticket_compare(filters: QueryFilters) -> list[dict[str, Any]]:
     return rows
 
 
+def fetch_core_table(filters: QueryFilters) -> list[dict[str, Any]]:
+    revenue_rows = fetch_revenue_share(filters)
+    order_rows = {row["platform"]: row for row in fetch_order_compare(filters)}
+    ticket_rows = {row["label"] if "label" in row else row["platform"]: row for row in fetch_ticket_compare(filters)}
+
+    total_orders = sum(row["valid_orders"] for row in order_rows.values())
+    result = []
+    for row in revenue_rows:
+        platform = row["platform"]
+        order_item = order_rows.get(platform, {})
+        ticket_item = ticket_rows.get(platform, {})
+        valid_orders = order_item.get("valid_orders", 0)
+        result.append(
+            {
+                "platform": platform,
+                "revenue": row["revenue"],
+                "revenue_share": row["share"],
+                "valid_orders": valid_orders,
+                "order_share": valid_orders / total_orders if total_orders else None,
+                "avg_ticket": ticket_item.get("avg_ticket"),
+            }
+        )
+    return result
+
+
 def fetch_trend(filters: QueryFilters, metric: str) -> list[dict[str, Any]]:
     metric_sql = {
         "revenue": "COALESCE(SUM(revenue), 0)",
         "orders": "COALESCE(SUM(valid_orders), 0)",
         "exposure_users": "COALESCE(SUM(exposure_users), 0)",
         "hand_rate": "CASE WHEN SUM(gross_amount) = 0 THEN NULL ELSE SUM(revenue) * 1.0 / SUM(gross_amount) END",
-        "active_stores": "COUNT(DISTINCT CASE WHEN active_store_flag = 1 THEN standard_store_id END)",
+        "active_stores": """
+            COUNT(
+                DISTINCT CASE
+                    WHEN active_store_flag = 1 THEN COALESCE(standard_store_id, platform || ':' || platform_store_id)
+                END
+            )
+        """,
     }
     if metric not in metric_sql:
         raise ValueError(f"不支持的趋势指标: {metric}")
@@ -176,7 +211,7 @@ def fetch_city_top20(filters: QueryFilters, metric: str) -> list[dict[str, Any]]
     metric_sql = {
         "revenue": "COALESCE(SUM(revenue), 0)",
         "orders": "COALESCE(SUM(valid_orders), 0)",
-        "store_count": "COUNT(DISTINCT standard_store_id)",
+        "store_count": "COUNT(DISTINCT COALESCE(standard_store_id, platform || ':' || platform_store_id))",
     }
     if metric not in metric_sql:
         raise ValueError(f"不支持的城市 Top20 指标: {metric}")
@@ -196,6 +231,86 @@ def fetch_city_top20(filters: QueryFilters, metric: str) -> list[dict[str, Any]]
     """
     with _connect() as conn:
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+
+def fetch_store_mapping_summary() -> dict[str, Any]:
+    sql = """
+        SELECT
+            COUNT(DISTINCT standard_store_id) AS standard_store_count,
+            COUNT(DISTINCT CASE WHEN platform = '美团' THEN standard_store_id END) AS meituan_mapped_count,
+            COUNT(DISTINCT CASE WHEN platform = '饿了么' THEN standard_store_id END) AS eleme_mapped_count,
+            COUNT(DISTINCT CASE WHEN platform = '京东' THEN standard_store_id END) AS jd_mapped_count
+        FROM bridge_platform_store_mapping
+    """
+    with _connect() as conn:
+        row = conn.execute(sql).fetchone()
+    return dict(row)
+
+
+def fetch_store_mapping_list(limit: int = 200) -> list[dict[str, Any]]:
+    sql = """
+        SELECT
+            m.standard_store_id,
+            s.standard_store_name,
+            s.province,
+            s.city,
+            s.district,
+            s.operator_name,
+            MAX(CASE WHEN m.platform = '美团' THEN m.platform_store_id END) AS meituan_store_id,
+            MAX(CASE WHEN m.platform = '美团' THEN m.platform_store_name END) AS meituan_store_name,
+            MAX(CASE WHEN m.platform = '饿了么' THEN m.platform_store_id END) AS eleme_store_id,
+            MAX(CASE WHEN m.platform = '饿了么' THEN m.platform_store_name END) AS eleme_store_name,
+            MAX(CASE WHEN m.platform = '京东' THEN m.platform_store_id END) AS jd_store_id,
+            MAX(CASE WHEN m.platform = '京东' THEN m.platform_store_name END) AS jd_store_name
+        FROM bridge_platform_store_mapping m
+        LEFT JOIN dim_standard_store s
+          ON s.standard_store_id = m.standard_store_id
+        GROUP BY m.standard_store_id, s.standard_store_name, s.province, s.city, s.district, s.operator_name
+        ORDER BY s.standard_store_name
+        LIMIT ?
+    """
+    with _connect() as conn:
+        return [dict(row) for row in conn.execute(sql, (limit,)).fetchall()]
+
+
+def fetch_filter_options() -> dict[str, Any]:
+    with _connect() as conn:
+        provinces = [
+            row["province"]
+            for row in conn.execute(
+                """
+                SELECT DISTINCT province
+                FROM dwd_platform_daily_normalized
+                WHERE province IS NOT NULL AND province != ''
+                ORDER BY province
+                """
+            ).fetchall()
+        ]
+        cities = [
+            row["city"]
+            for row in conn.execute(
+                """
+                SELECT DISTINCT city
+                FROM dwd_platform_daily_normalized
+                WHERE city IS NOT NULL AND city != ''
+                ORDER BY city
+                """
+            ).fetchall()
+        ]
+        meta = dict(
+            conn.execute(
+                """
+                SELECT MIN(biz_date) AS min_date, MAX(biz_date) AS max_date
+                FROM dwd_platform_daily_normalized
+                """
+            ).fetchone()
+        )
+    return {
+        "platforms": ["美团", "饿了么", "京东"],
+        "provinces": provinces,
+        "cities": cities,
+        **meta,
+    }
 
 
 def main() -> None:
