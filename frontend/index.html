@@ -43,17 +43,29 @@
 
         <section class="filter-bar">
           <div class="filter-group filter-group--segmented">
-            <button class="segment is-active" data-range="7">近7天</button>
-            <button class="segment" data-range="31">近31天</button>
+            <button class="segment is-active" data-range="yesterday">昨日</button>
+            <button class="segment" data-range="7">近7日</button>
+            <button class="segment" data-range="week">按周</button>
+            <button class="segment" data-range="month">按月</button>
             <button class="segment" data-range="custom">自定义时间</button>
           </div>
 
-          <div class="filter-group">
+          <div class="filter-group filter-group--week">
+            <label>选择周</label>
+            <input type="week" id="week-date" />
+          </div>
+
+          <div class="filter-group filter-group--month">
+            <label>选择月</label>
+            <input type="month" id="month-date" />
+          </div>
+
+          <div class="filter-group filter-group--custom">
             <label>开始日期</label>
             <input type="date" id="start-date" />
           </div>
 
-          <div class="filter-group">
+          <div class="filter-group filter-group--custom">
             <label>结束日期</label>
             <input type="date" id="end-date" />
           </div>

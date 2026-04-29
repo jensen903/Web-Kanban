@@ -3,10 +3,12 @@ const API_ROOT = "/api/v1";
 const state = {
   bootstrap: null,
   currentView: "overview",
-  rangeMode: "31",
+  rangeMode: "yesterday",
   selectedPlatforms: new Set(["美团", "饿了么", "京东"]),
   startDate: "",
   endDate: "",
+  weekValue: "",
+  monthValue: "",
   province: "",
   city: "",
   mappingKeyword: "",
@@ -122,6 +124,8 @@ function bindEvents() {
     state.startDate = normalizeInputDate(event.target.value);
     state.rangeMode = "custom";
     highlightCustomRange();
+    syncDateInputs();
+    toggleDateInputs();
     await loadAndRenderCurrentView();
   });
 
@@ -129,6 +133,24 @@ function bindEvents() {
     state.endDate = normalizeInputDate(event.target.value);
     state.rangeMode = "custom";
     highlightCustomRange();
+    syncDateInputs();
+    toggleDateInputs();
+    await loadAndRenderCurrentView();
+  });
+
+  document.getElementById("week-date").addEventListener("change", async (event) => {
+    state.weekValue = event.target.value;
+    state.rangeMode = "week";
+    highlightRangeMode("week");
+    applyDateRangeMode();
+    await loadAndRenderCurrentView();
+  });
+
+  document.getElementById("month-date").addEventListener("change", async (event) => {
+    state.monthValue = event.target.value;
+    state.rangeMode = "month";
+    highlightRangeMode("month");
+    applyDateRangeMode();
     await loadAndRenderCurrentView();
   });
 
@@ -184,8 +206,9 @@ function initializeDates() {
   const { min_date: minDate, max_date: maxDate } = state.bootstrap;
   document.getElementById("dataset-range").textContent = `${minDate} 至 ${maxDate}`;
   state.endDate = maxDate;
-  state.startDate = shiftDate(maxDate, -30);
-  syncDateInputs();
+  state.startDate = maxDate;
+  state.weekValue = toWeekInputValue(maxDate);
+  state.monthValue = toMonthInputValue(maxDate);
   applyDateRangeMode();
 }
 
@@ -266,25 +289,58 @@ function toggleScopedFilters() {
 }
 
 function highlightCustomRange() {
+  highlightRangeMode("custom");
+}
+
+function highlightRangeMode(rangeMode) {
   document.querySelectorAll(".segment").forEach((item) => item.classList.remove("is-active"));
-  document.querySelector('.segment[data-range="custom"]').classList.add("is-active");
+  document.querySelector(`.segment[data-range="${rangeMode}"]`)?.classList.add("is-active");
 }
 
 function applyDateRangeMode() {
   const maxDate = state.bootstrap.max_date;
-  if (state.rangeMode === "7") {
+  if (state.rangeMode === "yesterday") {
+    state.endDate = maxDate;
+    state.startDate = maxDate;
+  } else if (state.rangeMode === "7") {
     state.endDate = maxDate;
     state.startDate = shiftDate(maxDate, -6);
-  } else if (state.rangeMode === "31") {
-    state.endDate = maxDate;
-    state.startDate = shiftDate(maxDate, -30);
+  } else if (state.rangeMode === "week") {
+    if (!state.weekValue) state.weekValue = toWeekInputValue(maxDate);
+    const { startDate, endDate } = weekRangeFromInput(state.weekValue);
+    state.startDate = startDate;
+    state.endDate = clampEndDate(endDate, maxDate);
+  } else if (state.rangeMode === "month") {
+    if (!state.monthValue) state.monthValue = toMonthInputValue(maxDate);
+    const { startDate, endDate } = monthRangeFromInput(state.monthValue);
+    state.startDate = startDate;
+    state.endDate = clampEndDate(endDate, maxDate);
   }
   syncDateInputs();
+  toggleDateInputs();
 }
 
 function syncDateInputs() {
   document.getElementById("start-date").value = denormalizeInputDate(state.startDate);
   document.getElementById("end-date").value = denormalizeInputDate(state.endDate);
+  document.getElementById("week-date").value = state.weekValue;
+  document.getElementById("month-date").value = state.monthValue;
+}
+
+function toggleDateInputs() {
+  const isCustom = state.rangeMode === "custom";
+  const isWeek = state.rangeMode === "week";
+  const isMonth = state.rangeMode === "month";
+
+  document.querySelectorAll(".filter-group--custom").forEach((node) => {
+    node.style.display = isCustom ? "grid" : "none";
+  });
+  document.querySelectorAll(".filter-group--week").forEach((node) => {
+    node.style.display = isWeek ? "grid" : "none";
+  });
+  document.querySelectorAll(".filter-group--month").forEach((node) => {
+    node.style.display = isMonth ? "grid" : "none";
+  });
 }
 
 async function loadAndRenderCurrentView() {
@@ -345,16 +401,15 @@ function buildQuery({ includeLocation = false } = {}) {
 
 async function loadOverviewData() {
   const query = buildQuery();
-  const [summary, revenueShare, orderCompare, ticketCompare, coreTable, growthEfficiency] = await Promise.all([
+  const [summary, revenueShare, orderCompare, ticketCompare, coreTable] = await Promise.all([
     apiGet("/overview/summary", query),
     apiGet("/overview/revenue-share", query),
     apiGet("/overview/order-compare", query),
     apiGet("/overview/ticket-compare", query),
     apiGet("/overview/core-table", query),
-    apiGet("/overview/growth-efficiency", query),
   ]);
 
-  return { summary, revenueShare, orderCompare, ticketCompare, coreTable, growthEfficiency };
+  return { summary, revenueShare, orderCompare, ticketCompare, coreTable };
 }
 
 async function loadTrendsData() {
@@ -464,7 +519,6 @@ function renderOverview(data) {
     }))
     .sort((a, b) => b.avgTicket - a.avgTicket);
   const coreTable = buildCoreTableData(data.coreTable);
-  const growthEfficiency = buildGrowthEfficiencyTableData(data.growthEfficiency);
 
   document.getElementById("view-overview").innerHTML = `
     <div class="dashboard-grid">
@@ -534,16 +588,6 @@ function renderOverview(data) {
           <div class="rank-list">${renderRankList(ticketCompare, "avgTicket", false, "currency")}</div>
         </article>
       </div>
-
-      <article class="panel-card">
-        <div class="panel-header">
-          <div>
-            <h3>平台增长漏斗效率对比</h3>
-            <p class="panel-note">过程视角，聚焦曝光到进店、进店到下单两段效率，和上方结果表做角色区分。</p>
-          </div>
-        </div>
-        <div class="table-wrap">${renderTable(growthEfficiency.headers, growthEfficiency.rows)}</div>
-      </article>
     </div>
   `;
 }
@@ -812,8 +856,10 @@ function compareClassName(rate) {
 }
 
 function compareWindowLabel() {
+  if (state.rangeMode === "yesterday") return "昨日，较前1日";
   if (state.rangeMode === "7") return "近7天，较前7天";
-  if (state.rangeMode === "31") return "近31天，较前31天";
+  if (state.rangeMode === "week") return "本周，较前1周";
+  if (state.rangeMode === "month") return "本月，较前1月";
   return "自定义周期，较上一等长周期";
 }
 
@@ -1192,6 +1238,56 @@ function denormalizeInputDate(value) {
 function shiftDate(dateString, offsetDays) {
   const date = new Date(dateString.replaceAll("/", "-"));
   date.setDate(date.getDate() + offsetDays);
+  return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function clampEndDate(endDate, maxDate) {
+  return endDate > maxDate ? maxDate : endDate;
+}
+
+function toWeekInputValue(dateString) {
+  const date = new Date(dateString.replaceAll("/", "-"));
+  const normalized = new Date(date);
+  normalized.setHours(0, 0, 0, 0);
+  normalized.setDate(normalized.getDate() + 4 - ((normalized.getDay() + 6) % 7));
+  const yearStart = new Date(normalized.getFullYear(), 0, 1);
+  const week = Math.ceil((((normalized - yearStart) / 86400000) + yearStart.getDay() + 1) / 7);
+  return `${normalized.getFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+function toMonthInputValue(dateString) {
+  const [year, month] = denormalizeInputDate(dateString).split("-");
+  return `${year}-${month}`;
+}
+
+function weekRangeFromInput(value) {
+  const [yearText, weekText] = value.split("-W");
+  const year = Number(yearText);
+  const week = Number(weekText);
+  const januaryFourth = new Date(year, 0, 4);
+  const monday = new Date(januaryFourth);
+  monday.setDate(januaryFourth.getDate() - ((januaryFourth.getDay() + 6) % 7) + (week - 1) * 7);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return {
+    startDate: formatDateFromObject(monday),
+    endDate: formatDateFromObject(sunday),
+  };
+}
+
+function monthRangeFromInput(value) {
+  const [yearText, monthText] = value.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText) - 1;
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+  return {
+    startDate: formatDateFromObject(firstDay),
+    endDate: formatDateFromObject(lastDay),
+  };
+}
+
+function formatDateFromObject(date) {
   return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
 }
 

@@ -170,6 +170,8 @@ body {
 .platform-chip,
 select,
 input[type="date"],
+input[type="week"],
+input[type="month"],
 input[type="search"] {
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -199,6 +201,8 @@ input[type="search"] {
 
 select,
 input[type="date"],
+input[type="week"],
+input[type="month"],
 input[type="search"] {
   width: 100%;
   padding: 12px 14px;
