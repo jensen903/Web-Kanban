@@ -11,9 +11,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 EXPORT_DIR = BASE_DIR / "exports"
 WAREHOUSE_DIR = BASE_DIR / "warehouse"
 DB_PATH = WAREHOUSE_DIR / "web_kanban.db"
-STORE_MASTER_PATH = Path(
-    "/Users/apple/窄巷口/可视化看板/Master_门店主表/门店对齐表_最新版.xlsx"
-)
+STORE_MASTER_DIR = Path("/Users/apple/窄巷口/可视化看板/Master_门店主表")
 
 
 def build_standard_store_id(store_name: str) -> str:
@@ -56,8 +54,27 @@ def normalize_city(value: object) -> str | None:
     return normalize_text(value, "市")
 
 
+def resolve_store_master_path() -> Path:
+    preferred_names = [
+        "门店对齐表_最新版.xlsx",
+        "门店对齐表.xlsx",
+        "门店对齐表_副本.xlsx",
+        "门店对齐表旧版.xlsx",
+    ]
+    for file_name in preferred_names:
+        path = STORE_MASTER_DIR / file_name
+        if path.exists():
+            return path
+
+    candidates = sorted(STORE_MASTER_DIR.glob("门店对齐表*.xlsx"))
+    if candidates:
+        return candidates[0]
+
+    raise FileNotFoundError(f"未找到门店对齐表文件: {STORE_MASTER_DIR}")
+
+
 def build_master_tables() -> tuple[pd.DataFrame, pd.DataFrame]:
-    master = pd.read_excel(STORE_MASTER_PATH).copy()
+    master = pd.read_excel(resolve_store_master_path()).copy()
     master["门店名称"] = master["门店名称"].astype(str).str.strip()
     master["standard_store_id"] = master["门店名称"].apply(build_standard_store_id)
     master["省份"] = master["省份"].apply(normalize_province)

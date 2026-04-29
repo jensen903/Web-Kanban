@@ -6,8 +6,9 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
+PROJECT_DIR = BASE_DIR.parent
 DB_PATH = BASE_DIR / "warehouse" / "web_kanban.db"
-OUTPUT_PATH = BASE_DIR / "frontend" / "data" / "dashboard_dataset.json"
+OUTPUT_PATH = PROJECT_DIR / "frontend" / "data" / "dashboard_dataset.json"
 
 
 def fetch_rows(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[dict]:

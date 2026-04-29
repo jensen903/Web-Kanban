@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import re
 import sqlite3
+import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -11,40 +14,41 @@ import pandas as pd
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 RAW_DIR = Path("/Users/apple/窄巷口/可视化看板/Inputs/经营数据")
-STORE_MASTER_PATH = Path(
-    "/Users/apple/窄巷口/可视化看板/Master_门店主表/门店对齐表_最新版.xlsx"
-)
+RAW_ARCHIVE_DIR = Path("/Users/apple/窄巷口/可视化看板/Inputs/经营数据_历史备份")
+STORE_MASTER_DIR = Path("/Users/apple/窄巷口/可视化看板/Master_门店主表")
 
 WAREHOUSE_DIR = BASE_DIR / "warehouse"
 EXPORT_DIR = BASE_DIR / "exports"
 DB_PATH = WAREHOUSE_DIR / "web_kanban.db"
 
 
-PLATFORM_FILES = {
-    "美团": [
-        "1月美团汇总.csv",
-        "2月美团汇总.csv",
-        "3月美团汇总.csv",
-        "4月美团汇总.csv",
-    ],
-    "饿了么": [
-        "1月饿了么汇总.xlsx",
-        "2月饿了么汇总.xlsx",
-        "饿了么3月汇总.xlsx",
-        "4月饿了么汇总.xlsx",
-    ],
-    "京东": [
-        "1月京东汇总.xlsx",
-        "2月京东汇总.xlsx",
-        "3月京东汇总.xlsx",
-        "4月京东汇总.xlsx",
-    ],
+PLATFORM_FILE_PATTERNS = {
+    "美团": re.compile(r"(?P<month>\d+)月美团汇总\.csv$"),
+    "饿了么": re.compile(r"(?:饿了么)?(?P<month>\d+)月(?:饿了么)?汇总\.xlsx$"),
+    "京东": re.compile(r"(?P<month>\d+)月京东汇总\.xlsx$"),
 }
+PLATFORM_ORDER = {platform: index for index, platform in enumerate(PLATFORM_FILE_PATTERNS)}
+
+
+@dataclass(frozen=True)
+class SourceFile:
+    platform: str
+    source_month: int
+    path: Path
+
+    @property
+    def source_file(self) -> str:
+        return self.path.name
+
+    @property
+    def is_archived(self) -> bool:
+        return RAW_ARCHIVE_DIR in self.path.parents
 
 
 def ensure_output_dirs() -> None:
     WAREHOUSE_DIR.mkdir(parents=True, exist_ok=True)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    RAW_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def parse_source_month(file_name: str) -> int:
@@ -131,31 +135,120 @@ def build_standard_store_id(store_name: str) -> str:
     return f"SS_{digest}"
 
 
-def read_source_file(platform: str, file_name: str) -> pd.DataFrame:
-    path = RAW_DIR / file_name
-    if platform == "美团":
-        df = pd.read_csv(path, encoding="gb18030")
+def resolve_store_master_path() -> Path:
+    preferred_names = [
+        "门店对齐表_最新版.xlsx",
+        "门店对齐表.xlsx",
+        "门店对齐表_副本.xlsx",
+        "门店对齐表旧版.xlsx",
+    ]
+    for file_name in preferred_names:
+        path = STORE_MASTER_DIR / file_name
+        if path.exists():
+            return path
+
+    candidates = sorted(STORE_MASTER_DIR.glob("门店对齐表*.xlsx"))
+    if candidates:
+        return candidates[0]
+
+    raise FileNotFoundError(f"未找到门店对齐表文件: {STORE_MASTER_DIR}")
+
+
+def classify_source_file(path: Path) -> SourceFile | None:
+    for platform, pattern in PLATFORM_FILE_PATTERNS.items():
+        match = pattern.fullmatch(path.name)
+        if match:
+            return SourceFile(
+                platform=platform,
+                source_month=int(match.group("month")),
+                path=path,
+            )
+    return None
+
+
+def prefer_source_file(current: SourceFile, candidate: SourceFile) -> SourceFile:
+    if current.is_archived != candidate.is_archived:
+        return candidate if not candidate.is_archived else current
+
+    current_mtime = current.path.stat().st_mtime
+    candidate_mtime = candidate.path.stat().st_mtime
+    if candidate_mtime > current_mtime:
+        return candidate
+    return current
+
+
+def discover_source_files() -> list[SourceFile]:
+    selected: dict[tuple[str, int], SourceFile] = {}
+    candidate_paths: list[Path] = []
+
+    if RAW_ARCHIVE_DIR.exists():
+        candidate_paths.extend(path for path in RAW_ARCHIVE_DIR.rglob("*") if path.is_file())
+    if RAW_DIR.exists():
+        candidate_paths.extend(path for path in RAW_DIR.iterdir() if path.is_file())
+
+    for path in candidate_paths:
+        source = classify_source_file(path)
+        if source is None:
+            continue
+        key = (source.platform, source.source_month)
+        current = selected.get(key)
+        if current is None:
+            selected[key] = source
+            continue
+        selected[key] = prefer_source_file(current, source)
+
+    source_files = sorted(
+        selected.values(),
+        key=lambda item: (PLATFORM_ORDER[item.platform], item.source_month, item.source_file),
+    )
+    if not source_files:
+        raise FileNotFoundError(
+            f"未在 {RAW_DIR} 或 {RAW_ARCHIVE_DIR} 发现可处理的月汇总文件"
+        )
+    return source_files
+
+
+def read_source_file(source_file: SourceFile) -> pd.DataFrame:
+    if source_file.platform == "美团":
+        df = pd.read_csv(source_file.path, encoding="gb18030")
     else:
-        xls = pd.ExcelFile(path)
-        df = pd.read_excel(path, sheet_name=xls.sheet_names[0])
+        xls = pd.ExcelFile(source_file.path)
+        df = pd.read_excel(source_file.path, sheet_name=xls.sheet_names[0])
 
     df = df.copy()
-    df["source_platform"] = platform
-    df["source_file"] = file_name
-    df["source_month"] = parse_source_month(file_name)
+    df["source_platform"] = source_file.platform
+    df["source_file"] = source_file.source_file
+    df["source_month"] = source_file.source_month
     return df
 
 
-def build_raw_union() -> pd.DataFrame:
+def build_raw_union(source_files: Iterable[SourceFile]) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
-    for platform, files in PLATFORM_FILES.items():
-        for file_name in files:
-            frames.append(read_source_file(platform, file_name))
+    for source_file in source_files:
+        frames.append(read_source_file(source_file))
     return pd.concat(frames, ignore_index=True, sort=False)
 
 
+def archive_processed_sources(source_paths: list[Path]) -> Path | None:
+    if not source_paths:
+        return None
+
+    archive_dir = RAW_ARCHIVE_DIR / datetime.now().strftime("%Y%m%d_%H%M%S")
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    for source_path in source_paths:
+        target_path = archive_dir / source_path.name
+        if target_path.exists():
+            stem = target_path.stem
+            suffix = target_path.suffix
+            target_path = archive_dir / f"{stem}_{datetime.now().strftime('%H%M%S')}{suffix}"
+        shutil.move(str(source_path), str(target_path))
+
+    return archive_dir
+
+
 def build_store_master() -> tuple[pd.DataFrame, pd.DataFrame, dict[tuple[str, str], dict[str, object]]]:
-    master = pd.read_excel(STORE_MASTER_PATH)
+    master = pd.read_excel(resolve_store_master_path())
     master = master.copy()
     master["门店名称"] = master["门店名称"].astype(str).str.strip()
     master["standard_store_id"] = master["门店名称"].apply(build_standard_store_id)
@@ -335,8 +428,10 @@ def build_normalized_layer(
     mapping_lookup: dict[tuple[str, str], dict[str, object]],
 ) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
-    for platform in PLATFORM_FILES:
+    for platform in PLATFORM_FILE_PATTERNS:
         platform_df = raw_union[raw_union["source_platform"] == platform].copy()
+        if platform_df.empty:
+            continue
         frames.append(standardize_platform_rows(platform_df, mapping_lookup))
     return pd.concat(frames, ignore_index=True)
 
@@ -440,8 +535,10 @@ def write_sqlite(named_frames: Iterable[tuple[str, pd.DataFrame]]) -> None:
 
 def main() -> None:
     ensure_output_dirs()
+    source_files = discover_source_files()
+    source_paths = [source_file.path for source_file in source_files if not source_file.is_archived]
 
-    raw_union = build_raw_union()
+    raw_union = build_raw_union(source_files)
     dim_standard_store, bridge_platform_store_mapping, mapping_lookup = build_store_master()
     normalized = build_normalized_layer(raw_union, mapping_lookup)
     raw_index = build_raw_index(normalized)
@@ -468,11 +565,15 @@ def main() -> None:
 
     write_sqlite(sqlite_frames)
     export_csvs(export_frames)
+    archive_dir = archive_processed_sources(source_paths)
 
     print("本地数据仓库构建完成")
+    print(f"已加载源文件: {len(source_files)}")
     print(f"SQLite: {DB_PATH}")
     for name, _ in export_frames:
         print(f"CSV: {EXPORT_DIR / f'{name}.csv'}")
+    if archive_dir:
+        print(f"原始文件已归档到: {archive_dir}")
 
 
 if __name__ == "__main__":

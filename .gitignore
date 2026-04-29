@@ -1,3 +1,5 @@
 .DS_Store
 data/exports/*.csv
 data/warehouse/*.db
+src/exports/*.csv
+src/warehouse/*.db

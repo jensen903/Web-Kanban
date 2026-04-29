@@ -15,13 +15,20 @@
 - `build_local_warehouse.py`
 - `build_query_db.py`
 
+当前 `build_local_warehouse.py` 会自动扫描：
+
+- `Inputs/经营数据` 中待处理的当月汇总文件
+- `Inputs/经营数据_历史备份` 中已归档的历史月汇总文件
+
+如果同一平台同一月份同时存在“当前文件”和“历史归档文件”，脚本会优先使用当前文件；构建成功后，会把本次从 `Inputs/经营数据` 消费掉的月汇总文件移动到新的时间戳归档目录。
+
 输出结果：
 
-- `data/warehouse/web_kanban.db`
-- `data/exports/dwd_platform_daily_normalized.csv`
-- `data/exports/dws_platform_daily_summary.csv`
-- `data/exports/dws_store_daily_summary.csv`
-- `data/exports/dws_city_daily_summary.csv`
+- `src/warehouse/web_kanban.db`
+- `src/exports/dwd_platform_daily_normalized.csv`
+- `src/exports/dws_platform_daily_summary.csv`
+- `src/exports/dws_store_daily_summary.csv`
+- `src/exports/dws_city_daily_summary.csv`
 
 注意：
 

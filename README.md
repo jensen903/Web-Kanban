@@ -12,13 +12,11 @@
   - 历史字段口径说明文档
 - `assets/`
   - 现有的图片参考文件
-- `data/`
-  - 本地数据目录占位
-  - 导出的标准化经营明细与汇总表
-  - 本地查询库 `SQLite`
 - `src/`
   - 数据处理脚本
   - 本地查询层
+  - 本地导出表 `src/exports/`
+  - 本地查询库 `src/warehouse/web_kanban.db`
 - `frontend/`
   - 5 个看板的静态前端原型
   - 本地前端数据集
@@ -50,7 +48,6 @@
 .
 ├── README.md
 ├── assets/
-├── data/
 ├── docs/
 ├── frontend/
 └── src/
