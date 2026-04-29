@@ -336,9 +336,11 @@ function toggleScopedFilters() {
   const isLocationView = state.currentView === "stores" || state.currentView === "regions";
   const isMappingView = state.currentView === "mappings";
   const filterStage = document.getElementById("filter-stage");
+  const summaryBar = document.querySelector(".filter-summary-bar");
   const locationTrigger = document.getElementById("location-summary-trigger");
   const mappingShell = document.getElementById("mapping-filter-shell");
   if (filterStage) filterStage.style.display = isStageView ? "grid" : "none";
+  if (summaryBar) summaryBar.classList.toggle("has-location", isLocationView);
   if (locationTrigger) locationTrigger.style.display = isLocationView ? "grid" : "none";
   if (mappingShell) mappingShell.style.display = isMappingView ? "grid" : "none";
   if (!isStageView || (!isLocationView && state.activeEditor === "location")) {
@@ -1102,16 +1104,17 @@ function renderLineChart(seriesByPlatform, format, metricLabel = "指标值", su
   }
 
   const width = 960;
-  const height = 260;
+  const dates = uniqueValues(allPoints.map((point) => point.date)).sort();
+  const isSinglePoint = dates.length <= 1;
+  const height = isSinglePoint ? 180 : dates.length <= 3 ? 220 : 260;
   const padding = 32;
   const leftPadding = 78;
   const rightPadding = 24;
   const axis = computeChartAxis(allPoints.map((point) => point.value), format);
   const { minValue, maxValue, ticks } = axis;
-  const dates = uniqueValues(allPoints.map((point) => point.date)).sort();
 
   const xForIndex = (index) => {
-    if (dates.length <= 1) return leftPadding;
+    if (dates.length <= 1) return (leftPadding + (width - rightPadding)) / 2;
     return leftPadding + (index / (dates.length - 1)) * (width - leftPadding - rightPadding);
   };
   const yForValue = (value) => {
@@ -1195,15 +1198,16 @@ function renderLineChart(seriesByPlatform, format, metricLabel = "指标值", su
     .join("");
 
   return `
-    <div class="panel-note">${legends}</div>
-    <svg class="line-chart" viewBox="0 0 ${width} ${height}">
+    <div class="panel-note line-chart-legends">${legends}</div>
+    ${isSinglePoint ? `<p class="line-chart-hint">当前筛选周期仅覆盖 1 天，趋势图按单点快照展示。</p>` : ""}
+    <svg class="line-chart ${isSinglePoint ? "line-chart--single" : ""}" viewBox="0 0 ${width} ${height}">
       ${gridLines.join("")}
       ${yAxisLabels}
       ${polylines}
       ${labels}
     </svg>
-    <div class="panel-note" style="margin-top:14px; margin-bottom:8px;">${summaryLabel}</div>
-    <div class="mapping-meta" style="margin-top:0;">${latestSummary}</div>
+    <div class="panel-note line-chart-summary-label">${summaryLabel}</div>
+    <div class="mapping-meta line-chart-summary">${latestSummary}</div>
   `;
 }
 
