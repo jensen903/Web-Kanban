@@ -822,7 +822,6 @@ function renderStores(data) {
         { label: "总营收", value: formatCurrencyInteger(data.summary.total_revenue), sub: locationSubtitle() },
         { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: locationSubtitle() },
         { label: "活跃门店", value: formatInteger(data.summary.active_stores), sub: "按门店明细统计" },
-        { label: "统计区间", value: `${state.startDate} - ${state.endDate}`, sub: "支持省份 / 城市筛选" },
       ])}
 
       <article class="panel-card">
@@ -886,7 +885,6 @@ function renderRegions(data) {
           value: formatInteger(data.summary.covered_cities),
           sub: `覆盖省份 ${formatInteger(data.summary.covered_provinces)} 个，便于查看区域版图`,
         },
-        { label: "统计区间", value: `${state.startDate} - ${state.endDate}`, sub: "聚焦城市经营分布，不直接做增长判断" },
       ])}
 
       <article class="panel-card">
@@ -1000,8 +998,9 @@ function renderMappings(data) {
 }
 
 function renderMetricCards(items) {
+  const gridClassName = items.length === 3 ? "metric-grid metric-grid--three" : "metric-grid";
   return `
-    <div class="metric-grid">
+    <div class="${gridClassName}">
       ${items
         .map(
           (item) => `

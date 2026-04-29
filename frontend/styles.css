@@ -434,6 +434,10 @@ input[type="search"] {
   gap: 16px;
 }
 
+.metric-grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .metric-card,
 .panel-card {
   background: var(--surface);
