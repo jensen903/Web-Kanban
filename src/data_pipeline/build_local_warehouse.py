@@ -45,6 +45,17 @@ class SourceFile:
         return RAW_ARCHIVE_DIR in self.path.parents
 
 
+@dataclass(frozen=True)
+class SourceCoverage:
+    platform: str
+    source_month: int
+    source_file: str
+    row_count: int
+    store_count: int
+    city_count: int
+    is_archived: bool
+
+
 def ensure_output_dirs() -> None:
     WAREHOUSE_DIR.mkdir(parents=True, exist_ok=True)
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -227,6 +238,66 @@ def build_raw_union(source_files: Iterable[SourceFile]) -> pd.DataFrame:
     for source_file in source_files:
         frames.append(read_source_file(source_file))
     return pd.concat(frames, ignore_index=True, sort=False)
+
+
+def collect_source_coverages(source_files: Iterable[SourceFile]) -> list[SourceCoverage]:
+    coverages: list[SourceCoverage] = []
+    for source_file in source_files:
+        frame = read_source_file(source_file)
+        if source_file.platform in {"美团", "京东"}:
+            store_ids = frame["门店id"]
+            city_series = frame.get("城市", pd.Series([None] * len(frame)))
+        else:
+            store_ids = frame["门店编号"]
+            city_series = frame.get("城市名称", pd.Series([None] * len(frame)))
+
+        coverages.append(
+            SourceCoverage(
+                platform=source_file.platform,
+                source_month=source_file.source_month,
+                source_file=source_file.source_file,
+                row_count=len(frame),
+                store_count=store_ids.nunique(dropna=True),
+                city_count=city_series.nunique(dropna=True),
+                is_archived=source_file.is_archived,
+            )
+        )
+    return coverages
+
+
+def validate_source_coverages(coverages: list[SourceCoverage]) -> None:
+    issues: list[str] = []
+    platforms = sorted({coverage.platform for coverage in coverages}, key=lambda name: PLATFORM_ORDER[name])
+
+    for platform in platforms:
+        platform_coverages = sorted(
+            [coverage for coverage in coverages if coverage.platform == platform],
+            key=lambda coverage: coverage.source_month,
+        )
+        if len(platform_coverages) < 2:
+            continue
+
+        historical = platform_coverages[:-1]
+        latest = platform_coverages[-1]
+
+        baseline_store_count = max(coverage.store_count for coverage in historical)
+        baseline_city_count = max(coverage.city_count for coverage in historical)
+
+        if baseline_store_count and latest.store_count < max(3, baseline_store_count * 0.2):
+            issues.append(
+                f"{platform} {latest.source_month}月文件 {latest.source_file} 门店数仅 {latest.store_count}，"
+                f"显著低于历史月份的 {baseline_store_count}"
+            )
+
+        if baseline_city_count and latest.city_count < max(2, baseline_city_count * 0.2):
+            issues.append(
+                f"{platform} {latest.source_month}月文件 {latest.source_file} 城市数仅 {latest.city_count}，"
+                f"显著低于历史月份的 {baseline_city_count}"
+            )
+
+    if issues:
+        detail = "\n".join(f"- {issue}" for issue in issues)
+        raise ValueError(f"源文件覆盖范围异常，已停止构建：\n{detail}")
 
 
 def archive_processed_sources(source_paths: list[Path]) -> Path | None:
@@ -536,6 +607,8 @@ def write_sqlite(named_frames: Iterable[tuple[str, pd.DataFrame]]) -> None:
 def main() -> None:
     ensure_output_dirs()
     source_files = discover_source_files()
+    source_coverages = collect_source_coverages(source_files)
+    validate_source_coverages(source_coverages)
     source_paths = [source_file.path for source_file in source_files if not source_file.is_archived]
 
     raw_union = build_raw_union(source_files)
