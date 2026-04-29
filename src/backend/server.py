@@ -27,6 +27,7 @@ from query_service import (
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = BASE_DIR / "frontend"
+HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "4180"))
 
 
@@ -254,9 +255,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
 
 def main() -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), DashboardHandler)
-    print(f"Dashboard server running at http://127.0.0.1:{PORT}")
+    server = ThreadingHTTPServer((HOST, PORT), DashboardHandler)
+    display_host = HOST if HOST != "0.0.0.0" else "localhost / your LAN IP"
+    print(f"Dashboard server running at http://{display_host}:{PORT}")
     print(f"Serving frontend from: {FRONTEND_DIR}")
+    if HOST == "0.0.0.0":
+        print("LAN sharing enabled. Use your machine's intranet IP to open the dashboard from other devices.")
     server.serve_forever()
 
 
