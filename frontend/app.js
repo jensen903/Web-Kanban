@@ -878,7 +878,7 @@ function renderRegions(data) {
   document.getElementById("view-regions").innerHTML = `
     <div class="dashboard-grid">
       ${renderMetricCards([
-        { label: "总营收", value: formatWanInteger(data.summary.total_revenue), sub: "地域经营分布汇总" },
+        { label: "总营收", value: formatCurrencyInteger(data.summary.total_revenue), sub: "地域经营分布汇总" },
         { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: "区域规模与经营分布汇总" },
         {
           label: "覆盖城市",
