@@ -597,9 +597,6 @@ function renderTrends(data) {
     { title: "营业收入趋势", metricLabel: "营业收入", series: buildTrendSeries(data.revenue), format: "currency-int" },
     { title: "订单量趋势", metricLabel: "订单量", series: buildTrendSeries(data.orders), format: "integer" },
     { title: "曝光量趋势", metricLabel: "曝光量", series: buildTrendSeries(data.exposure), format: "integer" },
-    { title: "进店人数趋势", metricLabel: "进店人数", series: buildTrendSeries(data.visitUsers), format: "integer" },
-    { title: "进店转化率趋势", metricLabel: "进店转化率", series: buildTrendSeries(data.visitConversion), format: "percent" },
-    { title: "下单转化率趋势", metricLabel: "下单转化率", series: buildTrendSeries(data.orderConversion), format: "percent" },
     { title: "到手率趋势", metricLabel: "到手率", series: buildTrendSeries(data.handRate), format: "percent" },
   ];
 
@@ -609,7 +606,6 @@ function renderTrends(data) {
         { label: "总营收", value: formatWanInteger(data.summary.total_revenue), sub: "趋势页汇总" },
         { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: "趋势页汇总" },
         { label: "活跃门店", value: formatInteger(data.summary.active_stores), sub: "趋势页汇总" },
-        { label: "周期范围", value: `${state.startDate} - ${state.endDate}`, sub: "当前筛选区间" },
       ])}
       <div class="dashboard-grid">
         ${trendMetrics
@@ -948,7 +944,7 @@ function renderLineChart(seriesByPlatform, format, metricLabel = "指标值") {
   const yAxisLabels = ticks
     .map((tick) => {
       const y = yForValue(tick);
-      return `<text x="${leftPadding - 10}" y="${y + 4}" text-anchor="end" font-size="11" fill="#756455">${formatAxisTickValue(tick, format)}</text>`;
+      return `<text x="${leftPadding - 12}" y="${y + 5}" text-anchor="end" font-size="13" fill="#756455">${formatAxisTickValue(tick, format)}</text>`;
     })
     .join("");
 
@@ -992,7 +988,7 @@ function renderLineChart(seriesByPlatform, format, metricLabel = "指标值") {
     .filter((_, index) => index === 0 || index === dates.length - 1 || index % Math.ceil(dates.length / 6) === 0)
     .map((date) => {
       const index = dates.indexOf(date);
-      return `<text x="${xForIndex(index)}" y="${height - 8}" text-anchor="middle" font-size="11" fill="#756455">${date.slice(
+      return `<text x="${xForIndex(index)}" y="${height - 6}" text-anchor="middle" font-size="13" fill="#756455">${date.slice(
         5,
       )}</text>`;
     })
