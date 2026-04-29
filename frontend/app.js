@@ -525,7 +525,7 @@ function renderOverview(data) {
       ${renderMetricCards([
         {
           label: "总营收",
-          value: formatWanInteger(data.summary.total_revenue),
+          value: formatCurrencyInteger(data.summary.total_revenue),
           sub: `统计周期 ${state.startDate} - ${state.endDate}<span class="metric-compare ${compareClassName(data.summary.revenue_change_rate)}">${formatCompareText(data.summary.revenue_change_rate)}</span>`,
         },
         {
@@ -548,7 +548,7 @@ function renderOverview(data) {
               <h3>平台营收贡献占比</h3>
               <p class="panel-note">各平台收入占三平台总收入的比例</p>
             </div>
-            <span class="mini-stat">总收入 ${formatWanInteger(data.summary.total_revenue)}</span>
+            <span class="mini-stat">总收入 ${formatCurrencyInteger(data.summary.total_revenue)}</span>
           </div>
           <div class="donut-wrap">
             ${renderDonutChart(revenueShare)}
@@ -594,16 +594,16 @@ function renderOverview(data) {
 
 function renderTrends(data) {
   const trendMetrics = [
-    { title: "营业收入趋势", metricLabel: "营业收入", series: buildTrendSeries(data.revenue), format: "currency-int" },
-    { title: "订单量趋势", metricLabel: "订单量", series: buildTrendSeries(data.orders), format: "integer" },
-    { title: "曝光量趋势", metricLabel: "曝光量", series: buildTrendSeries(data.exposure), format: "integer" },
-    { title: "到手率趋势", metricLabel: "到手率", series: buildTrendSeries(data.handRate), format: "percent" },
+    { title: "营业收入趋势", metricLabel: "营业收入", series: buildTrendSeries(data.revenue), format: "currency-int", summaryMode: "sum", summaryLabel: "区间合计" },
+    { title: "订单量趋势", metricLabel: "订单量", series: buildTrendSeries(data.orders), format: "integer", summaryMode: "sum", summaryLabel: "区间合计" },
+    { title: "曝光量趋势", metricLabel: "曝光量", series: buildTrendSeries(data.exposure), format: "integer", summaryMode: "sum", summaryLabel: "区间合计" },
+    { title: "到手率趋势", metricLabel: "到手率", series: buildTrendSeries(data.handRate), format: "percent", summaryMode: "avg", summaryLabel: "区间均值" },
   ];
 
   document.getElementById("view-trends").innerHTML = `
     <div class="dashboard-grid">
       ${renderMetricCards([
-        { label: "总营收", value: formatWanInteger(data.summary.total_revenue), sub: "趋势页汇总" },
+        { label: "总营收", value: formatCurrencyInteger(data.summary.total_revenue), sub: "趋势页汇总" },
         { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: "趋势页汇总" },
         { label: "活跃门店", value: formatInteger(data.summary.active_stores), sub: "趋势页汇总" },
       ])}
@@ -618,7 +618,7 @@ function renderTrends(data) {
                     <p class="panel-note">统计周期内三平台按日期变化</p>
                   </div>
                 </div>
-                ${renderLineChart(metric.series, metric.format, metric.metricLabel)}
+                ${renderLineChart(metric.series, metric.format, metric.metricLabel, metric.summaryMode, metric.summaryLabel)}
               </article>
             `,
           )
@@ -636,7 +636,7 @@ function renderStores(data) {
   document.getElementById("view-stores").innerHTML = `
     <div class="dashboard-grid">
       ${renderMetricCards([
-        { label: "总营收", value: formatWanInteger(data.summary.total_revenue), sub: locationSubtitle() },
+        { label: "总营收", value: formatCurrencyInteger(data.summary.total_revenue), sub: locationSubtitle() },
         { label: "总订单量", value: formatInteger(data.summary.total_orders), sub: locationSubtitle() },
         { label: "活跃门店", value: formatInteger(data.summary.active_stores), sub: "按门店明细统计" },
         { label: "统计区间", value: `${state.startDate} - ${state.endDate}`, sub: "支持省份 / 城市筛选" },
@@ -913,7 +913,7 @@ function renderRankList(items, key, showShare = false, format = "number", showPl
     .join("");
 }
 
-function renderLineChart(seriesByPlatform, format, metricLabel = "指标值") {
+function renderLineChart(seriesByPlatform, format, metricLabel = "指标值", summaryMode = "latest", summaryLabel = "最新值") {
   const allPoints = Object.values(seriesByPlatform).flat();
   if (!allPoints.length) {
     return `<p class="empty-note">当前筛选条件下暂无趋势数据。</p>`;
@@ -1004,9 +1004,9 @@ function renderLineChart(seriesByPlatform, format, metricLabel = "指标值") {
 
   const latestSummary = Object.entries(seriesByPlatform)
     .map(([platform, points]) => {
-      const latest = points[points.length - 1];
+      const summaryValue = summarizeSeriesPoints(points, summaryMode);
       return `<span class="pill" style="background:${hexToSoft(chartColors[platform])};color:${chartColors[platform]}">${platform} ${formatValue(
-        latest?.value ?? 0,
+        summaryValue,
         format,
       )}</span>`;
     })
@@ -1020,8 +1020,20 @@ function renderLineChart(seriesByPlatform, format, metricLabel = "指标值") {
       ${polylines}
       ${labels}
     </svg>
-    <div class="mapping-meta" style="margin-top:14px;">${latestSummary}</div>
+    <div class="panel-note" style="margin-top:14px; margin-bottom:8px;">${summaryLabel}</div>
+    <div class="mapping-meta" style="margin-top:0;">${latestSummary}</div>
   `;
+}
+
+function summarizeSeriesPoints(points, summaryMode) {
+  if (!points.length) return 0;
+  if (summaryMode === "sum") {
+    return points.reduce((sum, point) => sum + Number(point.value || 0), 0);
+  }
+  if (summaryMode === "avg") {
+    return points.reduce((sum, point) => sum + Number(point.value || 0), 0) / points.length;
+  }
+  return Number(points[points.length - 1]?.value || 0);
 }
 
 function initializeChartTooltips() {
