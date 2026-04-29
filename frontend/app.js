@@ -333,7 +333,7 @@ function collectDistrictsForCity(locations, city) {
 
 function toggleScopedFilters() {
   const isStageView = state.currentView !== "mappings";
-  const isLocationView = state.currentView === "stores" || state.currentView === "regions";
+  const isLocationView = state.currentView === "stores";
   const isMappingView = state.currentView === "mappings";
   const filterStage = document.getElementById("filter-stage");
   const summaryBar = document.querySelector(".filter-summary-bar");
@@ -461,7 +461,7 @@ function syncLocationFilterControls() {
   const locationSummary = document.getElementById("location-filter-summary");
   if (!locationTrigger || !locationPanel || !locationSummary || !stage) return;
 
-  const isVisible = state.currentView === "stores" || state.currentView === "regions";
+  const isVisible = state.currentView === "stores";
   const isOpen = isVisible && state.editorStageOpen && state.activeEditor === "location";
   locationTrigger.style.display = isVisible ? "grid" : "none";
   locationTrigger.setAttribute("aria-expanded", String(isOpen));
@@ -618,19 +618,18 @@ async function loadStoresData() {
     ...buildQuery({ includeLocation: true }),
     limit: 10,
   };
-  const [summary, activeTrend, topRevenue, topOrders, topConversion] = await Promise.all([
+  const [summary, activeTrend, topRevenue, topOrders] = await Promise.all([
     apiGet("/stores/summary", query),
     apiGet("/stores/active-trend", query),
     apiGet("/stores/top-revenue", query),
     apiGet("/stores/top-orders", query),
-    apiGet("/stores/top-conversion", query),
   ]);
 
-  return { summary, activeTrend, topRevenue, topOrders, topConversion };
+  return { summary, activeTrend, topRevenue, topOrders };
 }
 
 async function loadRegionsData() {
-  const query = buildQuery({ includeLocation: true });
+  const query = buildQuery();
   const [summary, topRevenue, topOrders, topStoreCount, topStoreOutput] = await Promise.all([
     apiGet("/regions/summary", query),
     apiGet("/regions/top-revenue", query),
@@ -816,7 +815,6 @@ function renderTrends(data) {
 function renderStores(data) {
   const topRevenue = buildStoreRankItems(data.topRevenue);
   const topOrders = buildStoreRankItems(data.topOrders);
-  const topConversion = buildStoreRankItems(data.topConversion);
 
   document.getElementById("view-stores").innerHTML = `
     <div class="dashboard-grid">
@@ -836,7 +834,7 @@ function renderStores(data) {
         ${renderLineChart(buildTrendSeries(data.activeTrend), "integer", "活跃门店数")}
       </article>
 
-      <div class="chart-grid-3">
+      <div class="chart-grid-2">
         <article class="panel-card">
           <div class="panel-header">
             <div>
@@ -855,16 +853,6 @@ function renderStores(data) {
             </div>
           </div>
           <div class="rank-list">${renderRankList(topOrders, "value", false, "integer", false)}</div>
-        </article>
-
-        <article class="panel-card">
-          <div class="panel-header">
-            <div>
-              <h3>门店转化率 Top10</h3>
-              <p class="panel-note">按当前平台筛选结果展示前 10 家门店</p>
-            </div>
-          </div>
-          <div class="rank-list">${renderRankList(topConversion, "value", false, "percent", false)}</div>
         </article>
       </div>
     </div>
