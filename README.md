@@ -68,6 +68,43 @@
   - `frontend/app.js`
   - `frontend/serve_preview.py`
 
+## 本地启动
+
+启动看板：
+
+```bash
+cd "/Users/apple/Documents/New project"
+python3 src/backend/server.py
+```
+
+只自己本机查看：
+
+```bash
+cd "/Users/apple/Documents/New project"
+python3 src/backend/server.py
+```
+
+地址：
+
+- `http://127.0.0.1:4180`
+
+同事或领导在同一局域网查看：
+
+```bash
+cd "/Users/apple/Documents/New project"
+HOST=0.0.0.0 PORT=4180 python3 src/backend/server.py
+```
+
+地址示例：
+
+- `http://192.168.124.115:4180`
+
+说明：
+
+- 默认仍然只监听本机，不影响你平时使用
+- 开启 `HOST=0.0.0.0` 后，同一内网中能访问你电脑 IP 的设备都可能打开该看板
+- 局域网 IP 可能变化，如果地址失效，替换成你电脑当时的最新内网 IP 即可
+
 ## 下一步建议
 
 下一阶段建议继续推进：
