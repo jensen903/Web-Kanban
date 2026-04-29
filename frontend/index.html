@@ -42,91 +42,147 @@
         </header>
 
         <section class="filter-bar">
-          <div class="filter-group filter-group--segmented">
-            <button class="segment is-active" data-range="yesterday">昨日</button>
-            <button class="segment" data-range="7">近7日</button>
-            <button class="segment" data-range="week">按周</button>
-            <button class="segment" data-range="month">按月</button>
-            <button class="segment" data-range="custom">自定义时间</button>
-          </div>
+          <div class="filter-stage" id="filter-stage">
+            <div class="filter-summary-bar">
+              <button type="button" class="filter-summary-pill" id="time-summary-trigger" data-editor="time" aria-expanded="false">
+                <span class="filter-summary-label">时间</span>
+                <span class="filter-summary-value" id="time-filter-summary">昨日</span>
+              </button>
 
-          <div class="filter-group filter-group--week">
-            <label>选择周</label>
-            <input type="week" id="week-date" />
-          </div>
+              <button
+                type="button"
+                class="filter-summary-pill"
+                id="platform-summary-trigger"
+                data-editor="platform"
+                aria-expanded="false"
+              >
+                <span class="filter-summary-label">平台</span>
+                <span class="filter-summary-value" id="platform-filter-summary">全部平台</span>
+              </button>
 
-          <div class="filter-group filter-group--month">
-            <label>选择月</label>
-            <input type="month" id="month-date" />
-          </div>
+              <button type="button" class="filter-summary-reset" id="filter-reset-trigger">重置</button>
+            </div>
 
-          <div class="filter-group filter-group--custom">
-            <label>开始日期</label>
-            <input type="date" id="start-date" />
-          </div>
+            <div class="filter-editor-stage" id="filter-editor-stage">
+              <div class="filter-editor-panel" id="time-editor-panel">
+                <div class="time-mode-list">
+                  <button type="button" class="time-mode-option is-active" data-range="yesterday">按日</button>
+                  <button type="button" class="time-mode-option" data-range="7">近7日</button>
+                  <button type="button" class="time-mode-option" data-range="week">按周</button>
+                  <button type="button" class="time-mode-option" data-range="month">按月</button>
+                  <button type="button" class="time-mode-option" data-range="custom">自定义时间</button>
+                </div>
 
-          <div class="filter-group filter-group--custom">
-            <label>结束日期</label>
-            <input type="date" id="end-date" />
-          </div>
+                <div class="time-detail time-detail--week">
+                  <label>选择周</label>
+                  <input type="week" id="week-date" />
+                </div>
 
-          <div class="filter-group">
-            <label>平台</label>
-            <div class="platform-toggle">
-              <button class="platform-chip is-active" data-platform="美团">美团</button>
-              <button class="platform-chip is-active" data-platform="饿了么">饿了么</button>
-              <button class="platform-chip is-active" data-platform="京东">京东</button>
+                <div class="time-detail time-detail--month">
+                  <label>选择月</label>
+                  <input type="month" id="month-date" />
+                </div>
+
+                <div class="time-detail time-detail--custom">
+                  <div class="time-detail-grid">
+                    <div>
+                      <label>开始日期</label>
+                      <input type="date" id="start-date" />
+                    </div>
+                    <div>
+                      <label>结束日期</label>
+                      <input type="date" id="end-date" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="filter-editor-panel" id="platform-editor-panel">
+                <div class="platform-editor-list">
+                  <label class="check-option">
+                    <input type="checkbox" id="platform-all-toggle" checked />
+                    <span>全部平台</span>
+                  </label>
+                  <label class="check-option">
+                    <input type="checkbox" class="platform-checkbox" value="美团" checked />
+                    <span>美团</span>
+                  </label>
+                  <label class="check-option">
+                    <input type="checkbox" class="platform-checkbox" value="饿了么" checked />
+                    <span>饿了么</span>
+                  </label>
+                  <label class="check-option">
+                    <input type="checkbox" class="platform-checkbox" value="京东" checked />
+                    <span>京东</span>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div class="filter-group filter-location">
-            <label>省份</label>
-            <select id="province-filter">
-              <option value="">全部省份</option>
-            </select>
+          <div class="filter-secondary-row filter-location-row" id="location-filter-row">
+            <div class="filter-group filter-location">
+              <label>省份</label>
+              <select id="province-filter">
+                <option value="">全部省份</option>
+              </select>
+            </div>
+
+            <div class="filter-group filter-location">
+              <label>城市</label>
+              <select id="city-filter">
+                <option value="">全部城市</option>
+              </select>
+            </div>
           </div>
 
-          <div class="filter-group filter-location">
-            <label>城市</label>
-            <select id="city-filter">
-              <option value="">全部城市</option>
-            </select>
-          </div>
+          <div class="filter-mapping-shell" id="mapping-filter-shell">
+            <div class="filter-secondary-row">
+              <div class="filter-group filter-mapping">
+                <label>门店搜索</label>
+                <input type="search" id="mapping-search" placeholder="搜索门店名称或门店 ID" />
+              </div>
 
-          <div class="filter-group filter-mapping">
-            <label>门店搜索</label>
-            <input type="search" id="mapping-search" placeholder="搜索门店名称或门店 ID" />
-          </div>
+              <div class="filter-group filter-mapping">
+                <label>映射筛选</label>
+                <select id="mapping-filter">
+                  <option value="all">全部门店</option>
+                  <option value="fully-unmapped">完全未映射</option>
+                  <option value="selected-platform-unmapped">当前平台有未映射</option>
+                  <option value="selected-platform-fully-mapped">当前平台全部已映射</option>
+                </select>
+              </div>
 
-          <div class="filter-group filter-mapping">
-            <label>映射筛选</label>
-            <select id="mapping-filter">
-              <option value="all">全部门店</option>
-              <option value="fully-unmapped">完全未映射</option>
-              <option value="selected-platform-unmapped">当前平台有未映射</option>
-              <option value="selected-platform-fully-mapped">当前平台全部已映射</option>
-            </select>
-          </div>
+              <div class="filter-group filter-mapping filter-mapping-toggle">
+                <label>更多筛选</label>
+                <button type="button" class="mapping-more-button" id="mapping-more-toggle" aria-expanded="false">
+                  <span id="mapping-more-label">展开地域筛选</span>
+                </button>
+              </div>
+            </div>
 
-          <div class="filter-group filter-mapping">
-            <label>映射省份</label>
-            <select id="mapping-province-filter">
-              <option value="">全部省份</option>
-            </select>
-          </div>
+            <div class="filter-mapping-advanced" id="mapping-advanced-panel">
+              <div class="filter-group filter-mapping filter-mapping-advanced-item">
+                <label>映射省份</label>
+                <select id="mapping-province-filter">
+                  <option value="">全部省份</option>
+                </select>
+              </div>
 
-          <div class="filter-group filter-mapping">
-            <label>映射城市</label>
-            <select id="mapping-city-filter">
-              <option value="">全部城市</option>
-            </select>
-          </div>
+              <div class="filter-group filter-mapping filter-mapping-advanced-item">
+                <label>映射城市</label>
+                <select id="mapping-city-filter">
+                  <option value="">全部城市</option>
+                </select>
+              </div>
 
-          <div class="filter-group filter-mapping">
-            <label>映射地区</label>
-            <select id="mapping-district-filter">
-              <option value="">全部地区</option>
-            </select>
+              <div class="filter-group filter-mapping filter-mapping-advanced-item">
+                <label>映射地区</label>
+                <select id="mapping-district-filter">
+                  <option value="">全部地区</option>
+                </select>
+              </div>
+            </div>
           </div>
         </section>
 

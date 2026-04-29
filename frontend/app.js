@@ -16,6 +16,9 @@ const state = {
   mappingProvince: "",
   mappingCity: "",
   mappingDistrict: "",
+  mappingAdvancedOpen: false,
+  editorStageOpen: false,
+  activeEditor: "time",
   requestToken: 0,
 };
 
@@ -96,26 +99,63 @@ function bindEvents() {
     });
   });
 
-  document.querySelectorAll(".segment").forEach((button) => {
+  document.querySelectorAll(".time-mode-option").forEach((button) => {
     button.addEventListener("click", async () => {
-      document.querySelectorAll(".segment").forEach((item) => item.classList.remove("is-active"));
-      button.classList.add("is-active");
       state.rangeMode = button.dataset.range;
       applyDateRangeMode();
+      state.activeEditor = "time";
+      state.editorStageOpen = state.rangeMode === "custom" || state.rangeMode === "week" || state.rangeMode === "month";
+      syncFilterControls();
       await loadAndRenderCurrentView();
     });
   });
 
-  document.querySelectorAll(".platform-chip").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const platform = button.dataset.platform;
-      if (state.selectedPlatforms.has(platform) && state.selectedPlatforms.size > 1) {
-        state.selectedPlatforms.delete(platform);
-        button.classList.remove("is-active");
-      } else if (!state.selectedPlatforms.has(platform)) {
+  document.getElementById("time-summary-trigger").addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleEditorStage("time");
+  });
+
+  document.getElementById("platform-summary-trigger").addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleEditorStage("platform");
+  });
+
+  document.getElementById("filter-editor-stage").addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+
+  document.getElementById("filter-reset-trigger").addEventListener("click", async () => {
+    resetPrimaryFilters();
+    await loadAndRenderCurrentView();
+  });
+
+  document.getElementById("platform-all-toggle").addEventListener("change", async (event) => {
+    const checked = event.target.checked;
+    if (checked) {
+      state.selectedPlatforms = new Set(["美团", "饿了么", "京东"]);
+    } else {
+      state.selectedPlatforms = new Set(["美团", "饿了么", "京东"]);
+      event.target.checked = true;
+    }
+    syncPlatformFilterControls();
+    await loadAndRenderCurrentView();
+  });
+
+  document.querySelectorAll(".platform-checkbox").forEach((checkbox) => {
+    checkbox.addEventListener("change", async (event) => {
+      const platform = event.target.value;
+      if (event.target.checked) {
         state.selectedPlatforms.add(platform);
-        button.classList.add("is-active");
+      } else {
+        state.selectedPlatforms.delete(platform);
       }
+
+      if (!state.selectedPlatforms.size) {
+        state.selectedPlatforms.add(platform);
+        event.target.checked = true;
+      }
+
+      syncPlatformFilterControls();
       await loadAndRenderCurrentView();
     });
   });
@@ -123,35 +163,38 @@ function bindEvents() {
   document.getElementById("start-date").addEventListener("change", async (event) => {
     state.startDate = normalizeInputDate(event.target.value);
     state.rangeMode = "custom";
-    highlightCustomRange();
-    syncDateInputs();
-    toggleDateInputs();
+    syncFilterControls();
     await loadAndRenderCurrentView();
   });
 
   document.getElementById("end-date").addEventListener("change", async (event) => {
     state.endDate = normalizeInputDate(event.target.value);
     state.rangeMode = "custom";
-    highlightCustomRange();
-    syncDateInputs();
-    toggleDateInputs();
+    syncFilterControls();
     await loadAndRenderCurrentView();
   });
 
   document.getElementById("week-date").addEventListener("change", async (event) => {
     state.weekValue = event.target.value;
     state.rangeMode = "week";
-    highlightRangeMode("week");
     applyDateRangeMode();
+    state.editorStageOpen = true;
     await loadAndRenderCurrentView();
   });
 
   document.getElementById("month-date").addEventListener("change", async (event) => {
     state.monthValue = event.target.value;
     state.rangeMode = "month";
-    highlightRangeMode("month");
     applyDateRangeMode();
+    state.editorStageOpen = true;
     await loadAndRenderCurrentView();
+  });
+
+  document.addEventListener("click", () => {
+    if (state.editorStageOpen) {
+      state.editorStageOpen = false;
+      syncFilterControls();
+    }
   });
 
   document.getElementById("province-filter").addEventListener("change", async (event) => {
@@ -179,6 +222,11 @@ function bindEvents() {
   document.getElementById("mapping-filter").addEventListener("change", async (event) => {
     state.mappingFilter = event.target.value;
     await loadAndRenderCurrentView();
+  });
+
+  document.getElementById("mapping-more-toggle").addEventListener("click", () => {
+    state.mappingAdvancedOpen = !state.mappingAdvancedOpen;
+    toggleMappingAdvancedFilters();
   });
 
   document.getElementById("mapping-province-filter").addEventListener("change", async (event) => {
@@ -210,6 +258,7 @@ function initializeDates() {
   state.weekValue = toWeekInputValue(maxDate);
   state.monthValue = toMonthInputValue(maxDate);
   applyDateRangeMode();
+  syncFilterControls();
 }
 
 function populateLocationOptions() {
@@ -278,23 +327,31 @@ function collectDistrictsForCity(locations, city) {
 }
 
 function toggleScopedFilters() {
+  const isStageView = state.currentView !== "mappings";
   const isLocationView = state.currentView === "stores";
   const isMappingView = state.currentView === "mappings";
-  document.querySelectorAll(".filter-location").forEach((node) => {
-    node.style.display = isLocationView ? "grid" : "none";
-  });
-  document.querySelectorAll(".filter-mapping").forEach((node) => {
-    node.style.display = isMappingView ? "grid" : "none";
-  });
+  const filterStage = document.getElementById("filter-stage");
+  const locationRow = document.getElementById("location-filter-row");
+  const mappingShell = document.getElementById("mapping-filter-shell");
+  if (filterStage) filterStage.style.display = isStageView ? "grid" : "none";
+  if (locationRow) locationRow.style.display = isLocationView ? "grid" : "none";
+  if (mappingShell) mappingShell.style.display = isMappingView ? "grid" : "none";
+  if (!isStageView) state.editorStageOpen = false;
+  toggleMappingAdvancedFilters();
+  syncFilterControls();
 }
 
-function highlightCustomRange() {
-  highlightRangeMode("custom");
-}
+function toggleMappingAdvancedFilters() {
+  const isMappingView = state.currentView === "mappings";
+  const advancedPanel = document.getElementById("mapping-advanced-panel");
+  const toggleButton = document.getElementById("mapping-more-toggle");
+  const toggleLabel = document.getElementById("mapping-more-label");
+  if (!advancedPanel || !toggleButton || !toggleLabel) return;
 
-function highlightRangeMode(rangeMode) {
-  document.querySelectorAll(".segment").forEach((item) => item.classList.remove("is-active"));
-  document.querySelector(`.segment[data-range="${rangeMode}"]`)?.classList.add("is-active");
+  advancedPanel.style.display = isMappingView && state.mappingAdvancedOpen ? "grid" : "none";
+  toggleButton.setAttribute("aria-expanded", String(isMappingView && state.mappingAdvancedOpen));
+  toggleButton.classList.toggle("is-open", isMappingView && state.mappingAdvancedOpen);
+  toggleLabel.textContent = isMappingView && state.mappingAdvancedOpen ? "收起地域筛选" : "展开地域筛选";
 }
 
 function applyDateRangeMode() {
@@ -317,7 +374,7 @@ function applyDateRangeMode() {
     state.endDate = clampEndDate(endDate, maxDate);
   }
   syncDateInputs();
-  toggleDateInputs();
+  syncFilterControls();
 }
 
 function syncDateInputs() {
@@ -327,20 +384,114 @@ function syncDateInputs() {
   document.getElementById("month-date").value = state.monthValue;
 }
 
-function toggleDateInputs() {
+function syncFilterControls() {
+  syncDateFilterControls();
+  syncPlatformFilterControls();
+}
+
+function syncDateFilterControls() {
+  const timeTrigger = document.getElementById("time-summary-trigger");
+  const stage = document.getElementById("filter-editor-stage");
+  const timePanel = document.getElementById("time-editor-panel");
+  const timeSummary = document.getElementById("time-filter-summary");
+  if (!timeTrigger || !timePanel || !timeSummary || !stage) return;
+
+  const isOpen = state.editorStageOpen && state.activeEditor === "time";
+  timeTrigger.setAttribute("aria-expanded", String(isOpen));
+  timeTrigger.classList.toggle("is-active", isOpen);
+  timeSummary.textContent = currentTimeFilterLabel();
+  stage.classList.toggle("is-open", state.editorStageOpen);
+  timePanel.classList.toggle("is-active", isOpen);
+
+  document.querySelectorAll(".time-mode-option").forEach((item) => {
+    item.classList.toggle("is-active", item.dataset.range === state.rangeMode);
+  });
+
   const isCustom = state.rangeMode === "custom";
   const isWeek = state.rangeMode === "week";
   const isMonth = state.rangeMode === "month";
 
-  document.querySelectorAll(".filter-group--custom").forEach((node) => {
+  document.querySelectorAll(".time-detail--custom").forEach((node) => {
     node.style.display = isCustom ? "grid" : "none";
   });
-  document.querySelectorAll(".filter-group--week").forEach((node) => {
+  document.querySelectorAll(".time-detail--week").forEach((node) => {
     node.style.display = isWeek ? "grid" : "none";
   });
-  document.querySelectorAll(".filter-group--month").forEach((node) => {
+  document.querySelectorAll(".time-detail--month").forEach((node) => {
     node.style.display = isMonth ? "grid" : "none";
   });
+}
+
+function syncPlatformFilterControls() {
+  const platformTrigger = document.getElementById("platform-summary-trigger");
+  const stage = document.getElementById("filter-editor-stage");
+  const platformPanel = document.getElementById("platform-editor-panel");
+  const platformSummary = document.getElementById("platform-filter-summary");
+  const platformAllToggle = document.getElementById("platform-all-toggle");
+  if (!platformTrigger || !platformPanel || !platformSummary || !platformAllToggle || !stage) return;
+
+  const isOpen = state.editorStageOpen && state.activeEditor === "platform";
+  platformTrigger.setAttribute("aria-expanded", String(isOpen));
+  platformTrigger.classList.toggle("is-active", isOpen);
+  platformSummary.textContent = currentPlatformFilterLabel();
+  stage.classList.toggle("is-open", state.editorStageOpen);
+  platformPanel.classList.toggle("is-active", isOpen);
+
+  document.querySelectorAll(".platform-checkbox").forEach((checkbox) => {
+    checkbox.checked = state.selectedPlatforms.has(checkbox.value);
+  });
+  platformAllToggle.checked = state.selectedPlatforms.size === 3;
+}
+
+function currentTimeFilterLabel() {
+  if (state.rangeMode === "yesterday") return "昨日";
+  if (state.rangeMode === "7") return "近7日";
+  if (state.rangeMode === "week") return formatWeekFilterLabel(state.weekValue);
+  if (state.rangeMode === "month") return formatMonthFilterLabel(state.monthValue);
+  return `自定义：${state.startDate.slice(5)} - ${state.endDate.slice(5)}`;
+}
+
+function currentPlatformFilterLabel() {
+  const platforms = [...state.selectedPlatforms];
+  if (platforms.length === 3) return "全部平台";
+  if (platforms.length === 2) return `${platforms[0]} + ${platforms[1]}`;
+  return platforms[0] || "全部平台";
+}
+
+function toggleEditorStage(editor) {
+  if (state.activeEditor === editor && state.editorStageOpen) {
+    state.editorStageOpen = false;
+  } else {
+    state.activeEditor = editor;
+    state.editorStageOpen = true;
+  }
+  syncFilterControls();
+}
+
+function resetPrimaryFilters() {
+  state.rangeMode = "yesterday";
+  state.selectedPlatforms = new Set(["美团", "饿了么", "京东"]);
+  state.province = "";
+  state.city = "";
+  state.editorStageOpen = false;
+  state.activeEditor = "time";
+  state.weekValue = toWeekInputValue(state.bootstrap.max_date);
+  state.monthValue = toMonthInputValue(state.bootstrap.max_date);
+  applyDateRangeMode();
+  populateLocationOptions();
+  syncFilterControls();
+}
+
+function formatWeekFilterLabel(value) {
+  if (!value) return "按周";
+  const [year, week] = value.split("-W");
+  return `${year}年第${Number(week)}周`;
+}
+
+function formatMonthFilterLabel(value) {
+  if (!value) return "按月";
+  const [year, month] = value.split("-");
+  return `${year}年${Number(month)}月`;
 }
 
 async function loadAndRenderCurrentView() {
