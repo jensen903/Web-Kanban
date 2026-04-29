@@ -60,6 +60,17 @@
                 <span class="filter-summary-value" id="platform-filter-summary">全部平台</span>
               </button>
 
+              <button
+                type="button"
+                class="filter-summary-pill filter-summary-pill--location"
+                id="location-summary-trigger"
+                data-editor="location"
+                aria-expanded="false"
+              >
+                <span class="filter-summary-label">地区</span>
+                <span class="filter-summary-value" id="location-filter-summary">全部省份</span>
+              </button>
+
               <button type="button" class="filter-summary-reset" id="filter-reset-trigger">重置</button>
             </div>
 
@@ -117,22 +128,24 @@
                   </label>
                 </div>
               </div>
-            </div>
-          </div>
 
-          <div class="filter-secondary-row filter-location-row" id="location-filter-row">
-            <div class="filter-group filter-location">
-              <label>省份</label>
-              <select id="province-filter">
-                <option value="">全部省份</option>
-              </select>
-            </div>
+              <div class="filter-editor-panel" id="location-editor-panel">
+                <div class="location-editor-grid">
+                  <div class="time-detail">
+                    <label>省份</label>
+                    <select id="province-filter">
+                      <option value="">全部省份</option>
+                    </select>
+                  </div>
 
-            <div class="filter-group filter-location">
-              <label>城市</label>
-              <select id="city-filter">
-                <option value="">全部城市</option>
-              </select>
+                  <div class="time-detail">
+                    <label>城市</label>
+                    <select id="city-filter">
+                      <option value="">全部城市</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 

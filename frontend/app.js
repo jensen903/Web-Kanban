@@ -120,6 +120,11 @@ function bindEvents() {
     toggleEditorStage("platform");
   });
 
+  document.getElementById("location-summary-trigger").addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleEditorStage("location");
+  });
+
   document.getElementById("filter-editor-stage").addEventListener("click", (event) => {
     event.stopPropagation();
   });
@@ -328,15 +333,18 @@ function collectDistrictsForCity(locations, city) {
 
 function toggleScopedFilters() {
   const isStageView = state.currentView !== "mappings";
-  const isLocationView = state.currentView === "stores";
+  const isLocationView = state.currentView === "stores" || state.currentView === "regions";
   const isMappingView = state.currentView === "mappings";
   const filterStage = document.getElementById("filter-stage");
-  const locationRow = document.getElementById("location-filter-row");
+  const locationTrigger = document.getElementById("location-summary-trigger");
   const mappingShell = document.getElementById("mapping-filter-shell");
   if (filterStage) filterStage.style.display = isStageView ? "grid" : "none";
-  if (locationRow) locationRow.style.display = isLocationView ? "grid" : "none";
+  if (locationTrigger) locationTrigger.style.display = isLocationView ? "grid" : "none";
   if (mappingShell) mappingShell.style.display = isMappingView ? "grid" : "none";
-  if (!isStageView) state.editorStageOpen = false;
+  if (!isStageView || (!isLocationView && state.activeEditor === "location")) {
+    state.editorStageOpen = false;
+    if (!isLocationView && state.activeEditor === "location") state.activeEditor = "time";
+  }
   toggleMappingAdvancedFilters();
   syncFilterControls();
 }
@@ -387,6 +395,7 @@ function syncDateInputs() {
 function syncFilterControls() {
   syncDateFilterControls();
   syncPlatformFilterControls();
+  syncLocationFilterControls();
 }
 
 function syncDateFilterControls() {
@@ -443,6 +452,22 @@ function syncPlatformFilterControls() {
   platformAllToggle.checked = state.selectedPlatforms.size === 3;
 }
 
+function syncLocationFilterControls() {
+  const locationTrigger = document.getElementById("location-summary-trigger");
+  const stage = document.getElementById("filter-editor-stage");
+  const locationPanel = document.getElementById("location-editor-panel");
+  const locationSummary = document.getElementById("location-filter-summary");
+  if (!locationTrigger || !locationPanel || !locationSummary || !stage) return;
+
+  const isVisible = state.currentView === "stores" || state.currentView === "regions";
+  const isOpen = isVisible && state.editorStageOpen && state.activeEditor === "location";
+  locationTrigger.style.display = isVisible ? "grid" : "none";
+  locationTrigger.setAttribute("aria-expanded", String(isOpen));
+  locationTrigger.classList.toggle("is-active", isOpen);
+  locationSummary.textContent = currentLocationFilterLabel();
+  locationPanel.classList.toggle("is-active", isOpen);
+}
+
 function currentTimeFilterLabel() {
   if (state.rangeMode === "yesterday") return "昨日";
   if (state.rangeMode === "7") return "近7日";
@@ -456,6 +481,13 @@ function currentPlatformFilterLabel() {
   if (platforms.length === 3) return "全部平台";
   if (platforms.length === 2) return `${platforms[0]} + ${platforms[1]}`;
   return platforms[0] || "全部平台";
+}
+
+function currentLocationFilterLabel() {
+  if (!state.province) return "全部省份";
+  const provinceLabel = displayProvince(state.province);
+  if (!state.city) return provinceLabel;
+  return `${provinceLabel} · ${state.city}`;
 }
 
 function toggleEditorStage(editor) {
@@ -596,7 +628,7 @@ async function loadStoresData() {
 }
 
 async function loadRegionsData() {
-  const query = buildQuery();
+  const query = buildQuery({ includeLocation: true });
   const [summary, topRevenue, topOrders, topStoreCount, topStoreOutput] = await Promise.all([
     apiGet("/regions/summary", query),
     apiGet("/regions/top-revenue", query),
