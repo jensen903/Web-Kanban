@@ -14,6 +14,30 @@
 
 - `build_local_warehouse.py`
 - `build_query_db.py`
+- `export_frontend_dataset.py`
+
+目录配置：
+
+- 默认数据根目录：`/Users/apple/窄巷口/可视化看板`
+- 如需迁移到其他电脑或 Linux 环境，可通过环境变量覆盖：
+  - `WEB_KANBAN_DATA_ROOT`
+  - `WEB_KANBAN_RAW_DIR`
+  - `WEB_KANBAN_RAW_ARCHIVE_DIR`
+  - `WEB_KANBAN_STORE_MASTER_DIR`
+
+一键更新并以局域网方式启动看板：
+
+```bash
+bash scripts/update_and_serve_lan.sh
+```
+
+常用可选项：
+
+```bash
+PORT=4181 bash scripts/update_and_serve_lan.sh
+WEB_KANBAN_DATA_ROOT="/data/web-kanban" bash scripts/update_and_serve_lan.sh
+PYTHON_BIN=python3 bash scripts/update_and_serve_lan.sh
+```
 
 当前 `build_local_warehouse.py` 会自动扫描：
 

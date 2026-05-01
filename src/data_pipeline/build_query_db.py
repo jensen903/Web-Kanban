@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import sqlite3
 from pathlib import Path
 
@@ -11,7 +12,11 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 EXPORT_DIR = BASE_DIR / "exports"
 WAREHOUSE_DIR = BASE_DIR / "warehouse"
 DB_PATH = WAREHOUSE_DIR / "web_kanban.db"
-STORE_MASTER_DIR = Path("/Users/apple/窄巷口/可视化看板/Master_门店主表")
+DEFAULT_DATA_ROOT = Path("/Users/apple/窄巷口/可视化看板")
+DATA_ROOT = Path(os.environ.get("WEB_KANBAN_DATA_ROOT", str(DEFAULT_DATA_ROOT))).expanduser()
+STORE_MASTER_DIR = Path(
+    os.environ.get("WEB_KANBAN_STORE_MASTER_DIR", str(DATA_ROOT / "Master_门店主表"))
+).expanduser()
 
 
 def build_standard_store_id(store_name: str) -> str:

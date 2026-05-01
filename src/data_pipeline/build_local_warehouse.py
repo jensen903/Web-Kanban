@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import os
 import re
 import sqlite3
 import shutil
@@ -13,9 +14,15 @@ import pandas as pd
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-RAW_DIR = Path("/Users/apple/窄巷口/可视化看板/Inputs/经营数据")
-RAW_ARCHIVE_DIR = Path("/Users/apple/窄巷口/可视化看板/Inputs/经营数据_历史备份")
-STORE_MASTER_DIR = Path("/Users/apple/窄巷口/可视化看板/Master_门店主表")
+DEFAULT_DATA_ROOT = Path("/Users/apple/窄巷口/可视化看板")
+DATA_ROOT = Path(os.environ.get("WEB_KANBAN_DATA_ROOT", str(DEFAULT_DATA_ROOT))).expanduser()
+RAW_DIR = Path(os.environ.get("WEB_KANBAN_RAW_DIR", str(DATA_ROOT / "Inputs" / "经营数据"))).expanduser()
+RAW_ARCHIVE_DIR = Path(
+    os.environ.get("WEB_KANBAN_RAW_ARCHIVE_DIR", str(DATA_ROOT / "Inputs" / "经营数据_历史备份"))
+).expanduser()
+STORE_MASTER_DIR = Path(
+    os.environ.get("WEB_KANBAN_STORE_MASTER_DIR", str(DATA_ROOT / "Master_门店主表"))
+).expanduser()
 
 WAREHOUSE_DIR = BASE_DIR / "warehouse"
 EXPORT_DIR = BASE_DIR / "exports"
